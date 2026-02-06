@@ -10,6 +10,10 @@
 #include <memory>
 #include <ostream>
 #include <string>
+#include <mutex>
+#include <vector>
+
+#include "atlas/field.h"
 
 #include "oops/generic/GlobalInterpolator.h"
 
@@ -31,15 +35,30 @@ class IOStructuredGridParameters : public IOParametersBase {
  public:
   // Type of structured grid to write
   oops::Parameter<std::string> outputGridType{"gridtype", "gridtype", "F12", this};
+  oops::OptionalParameter<std::string> mode{"mode", "read/write/both", this};
 
   // Filename of output
   oops::Parameter<std::string> filename{"filename", "filename",
                                         "cube_to_geometric_%Y%m%dT%H%M%S.nc4", this};
 
+  // Filename of input (for reading external structured-grid files)
+  oops::OptionalParameter<std::string> inputFilename{"input filename",
+                                                     "input NetCDF filename for read()",
+                                                     this};
+
+  // Filename of input (for reading external structured-grid files)
+  oops::OptionalParameter<std::string> akbk{"akbk", "akbk for interpolation target",
+                                                     this};
   // Interpolator type
   oops::Parameter<std::string> interpolator{"local interpolator type", "local interpolator type",
                                             "oops unstructured grid interpolator",
                                             this};
+
+  // Optionally config domain region boundaries
+  oops::OptionalParameter<float> lon_min{"lon_min", "minimum longitude for read in",this};
+  oops::OptionalParameter<float> lon_max{"lon_max", "maximum longitude for read in",this};
+  oops::OptionalParameter<float> lat_min{"lat_min", "minimum latitude for read in",this};
+  oops::OptionalParameter<float> lat_max{"lat_max", "maximum latitude for read in",this};
 
   // Optionally config may contain member
   oops::OptionalParameter<int> member{"member", "ensemble member number", this};
@@ -88,10 +107,18 @@ class IOStructuredGrid : public IOBase, private util::ObjectCounter<IOStructured
 
   // Data
   std::unique_ptr<oops::GlobalInterpolator> interpolator_;
+  mutable std::unique_ptr<oops::GlobalInterpolator> interpolatorBack_;  // mutable: created in read()
   const Geometry & geom_;
   std::string gridStr_;
   Parameters_ params_;
   std::unique_ptr<atlas::functionspace::StructuredColumns> writeFunctionSpace_;
+  mutable std::unique_ptr<atlas::functionspace::StructuredColumns> readFunctionSpace_;  // mutable: used in read()
+  atlas::Field readLonLat_;
+  void loadAkBkOnce_(int nLevModel) const;
+  mutable std::once_flag akbk_once_;
+  mutable std::vector<double> ak_;   // size = nLevModel+1
+  mutable std::vector<double> bk_;   // size = nLevModel+1
+  mutable int akbk_nlev_model_ = -1;
 };
 
 // -------------------------------------------------------------------------------------------------
