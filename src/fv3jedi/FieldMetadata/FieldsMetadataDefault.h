@@ -479,7 +479,7 @@ namespace fv3jedi {
     md.units = "none";
     md.kind = "double";
     md.tracer = "false";
-    md.levels = "1";
+    md.levels = "9";
     md.space = "magnitude";
     addFieldMetadata(fieldsmetadata, nlev, md);
 
@@ -503,7 +503,7 @@ namespace fv3jedi {
     md.units = "none";
     md.kind = "double";
     md.tracer = "false";
-    md.levels = "1";
+    md.levels = "9";
     md.space = "magnitude";
     addFieldMetadata(fieldsmetadata, nlev, md);
 
