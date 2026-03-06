@@ -49,6 +49,30 @@ class IOStructuredGridParameters : public IOParametersBase {
   // Filename of input (for reading external structured-grid files)
   oops::OptionalParameter<std::string> akbk{"akbk", "akbk for interpolation target",
                                                      this};
+
+  // Output fms restart parameters (for mode="both")
+  oops::OptionalParameter<std::string> output_datapath{"output datapath",
+                                                       "output datapath for fms restart write",
+                                                       this};
+  oops::OptionalParameter<std::string> output_filename_core{"output filename_core",
+                                                            "output fv_core restart filename",
+                                                            this};
+  oops::OptionalParameter<std::string> output_filename_trcr{"output filename_trcr",
+                                                            "output fv_tracer restart filename",
+                                                            this};
+  oops::OptionalParameter<std::string> output_filename_sfcd{"output filename_sfcd",
+                                                            "output sfc_data restart filename",
+                                                            this};
+  oops::OptionalParameter<std::string> output_filename_sfcw{"output filename_sfcw",
+                                                            "output fv_srf_wnd restart filename",
+                                                            this};
+  oops::OptionalParameter<std::string> output_filename_cplr{"output filename_cplr",
+                                                            "output coupler restart filename",
+                                                            this};
+  oops::OptionalParameter<eckit::LocalConfiguration> output_field_io_names{
+                                                            "output field io names",
+                                                            "field name mapping for fms restart write",
+                                                            this};
   // Interpolator type
   oops::Parameter<std::string> interpolator{"local interpolator type", "local interpolator type",
                                             "oops unstructured grid interpolator",

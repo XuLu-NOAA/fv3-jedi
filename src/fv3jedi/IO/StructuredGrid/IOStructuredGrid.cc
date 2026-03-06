@@ -26,17 +26,13 @@
 #include "fv3jedi/IO/StructuredGrid/IOStructuredGrid.h"
 #include "fv3jedi/State/State.h"
 
-#include <fstream>
-#include <iomanip>
 #include <cmath>
 #include <string>
 #include <algorithm>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include "atlas/array.h"
 #include "atlas/field.h"
 
-#include <iostream>
 #include <sstream>
 #include <unistd.h>  // getpid()
 #include <limits>
@@ -53,34 +49,6 @@ static inline void nc_rc(const int return_code, const std::string & operation) {
   }
 }
 
-static size_t findNearestIndex(const std::vector<double>& arr, double value, bool lower_bound) {
-  if (arr.empty()) return 0;
-  size_t left = 0;
-  size_t right = arr.size() - 1;
-  if (lower_bound) {
-    // Find first index where arr[idx] >= value
-    while (left < right) {
-      size_t mid = (left + right) / 2;
-      if (arr[mid] < value) {
-        left = mid + 1;
-      } else {
-        right = mid;
-      }
-    }
-    return left;
-  } else {
-    // Find last index where arr[idx] <= value
-    while (left < right) {
-      size_t mid = (left + right + 1) / 2;
-      if (arr[mid] > value) {
-        right = mid - 1;
-      } else {
-        left = mid;
-      }
-    }
-    return left;
-  }
-}
 
 // -------------------------------------------------------------------------------------------------
 IOStructuredGrid::IOStructuredGrid(const Geometry & geom, const Parameters_ & params)
@@ -256,7 +224,7 @@ if (!interpolatorBack_) {
     oops::Log::info() << "Interpolator created (will be reused for all files)" << std::endl;
   }
 }
-  
+
   oops::Log::trace() << classname() << " constructor done (" << mode << ")" << std::endl;
 }
 // -------------------------------------------------------------------------------------------------
@@ -1003,6 +971,30 @@ void IOStructuredGrid::read(State & x,
   auto t_from0 = clock_t::now();
   x.fromFieldSet(fieldsModelAll);
   log0t("[TIMER] fromFieldSet: ", sec(t_from0, clock_t::now()));
+
+  // ============================================================
+  // 12) If mode=="both", write interpolated state as fms restart
+  // ============================================================
+  const std::string mode = (params_.mode.value() != boost::none) ? *params_.mode.value() : "read";
+  if (mode == "both") {
+    if (params_.output_datapath.value() == boost::none) {
+      ABORT("IOStructuredGrid: mode is 'both' but no output datapath specified");
+    }
+    auto t_write0 = clock_t::now();
+    eckit::LocalConfiguration outputConfig;
+    outputConfig.set("filetype", "fms restart");
+    outputConfig.set("datapath", *params_.output_datapath.value());
+    outputConfig.set("filename_core", *params_.output_filename_core.value());
+    outputConfig.set("filename_trcr", *params_.output_filename_trcr.value());
+    outputConfig.set("filename_sfcd", *params_.output_filename_sfcd.value());
+    outputConfig.set("filename_sfcw", *params_.output_filename_sfcw.value());
+    outputConfig.set("filename_cplr", *params_.output_filename_cplr.value());
+    if (params_.output_field_io_names.value() != boost::none) {
+      outputConfig.set("field io names", *params_.output_field_io_names.value());
+    }
+    x.write(outputConfig);
+    log0t("[TIMER] write fms restart: ", sec(t_write0, clock_t::now()));
+  }
 
   log0t("[TIMER] TOTAL read(): ", sec(t_total0, clock_t::now()));
 }
