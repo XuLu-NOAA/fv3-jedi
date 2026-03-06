@@ -43,11 +43,21 @@ integer, parameter, public :: field_clen = 2048
 type :: fv3jedi_field
  logical :: lalloc = .false.
  character(len=field_clen) :: long_name                       ! Field long name
+ character(len=field_clen) :: model_name                      ! Name of field in model space
  character(len=field_clen) :: units                           ! Field units
  character(len=field_clen) :: kind                            ! Data kind, real, integer etc (always allocate real data)
  logical                   :: tracer                          ! Whether field is tracer or not
  character(len=field_clen) :: space                           ! Vector, magnitude, direction
  integer :: isc, iec, jsc, jec, npz
+
+ class(*), allocatable :: array_file(:,:,:)                   ! Memory for NetCDF read buffer (whole level)
+                                                              ! Type is determined by the type held in the file
+
+ class(*), allocatable :: array_file_scatter(:,:,:)           ! In cases where the variable type in a NetCDF file is "smaller"
+                                                              ! than the type the application expects (r4 < r8), we read and scatter
+                                                              ! smaller type then convert to the application type.  Thus, we
+                                                              ! need someplace to put the scattered data before converting
+
  real(kind=kind_real), allocatable :: array(:,:,:)
  type(fckit_mpi_comm) :: comm                       ! Communicator
 endtype fv3jedi_field

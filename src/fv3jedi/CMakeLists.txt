@@ -34,6 +34,8 @@ list( APPEND fv3jedi_src_files
   Increment/Increment.interface.h
   Increment/fv3jedi_increment_interface_mod.F90
   Increment/fv3jedi_increment_mod.F90
+  IO/FV3Restart/module_fv3lam_stats.f90
+  IO/FV3Restart/module_mpi_arrange.f90
   IO/FV3Restart/fv3jedi_io_fms2_mod.f90
   IO/FV3Restart/IOFms.cc
   IO/FV3Restart/IOFms.h
@@ -44,6 +46,11 @@ list( APPEND fv3jedi_src_files
   IO/CubeSphereHistory/IOCubeSphereHistory.h
   IO/CubeSphereHistory/IOCubeSphereHistory.interface.F90
   IO/CubeSphereHistory/IOCubeSphereHistory.interface.h
+#  IO/StructuredGrid/fv3jedi_io_gaussian_mod.f90
+#  IO/StructuredGrid/IOGaussian.cc
+#  IO/StructuredGrid/IOGaussian.h
+#  IO/StructuredGrid/IOGaussian.interface.F90
+#  IO/StructuredGrid/IOGaussian.interface.h
   IO/StructuredGrid/IOStructuredGrid.cc
   IO/StructuredGrid/IOStructuredGrid.h
   IO/Utils/fv3jedi_io_utils_mod.f90
