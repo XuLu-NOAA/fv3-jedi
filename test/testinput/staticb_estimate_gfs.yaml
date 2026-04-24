@@ -78,9 +78,9 @@ background error:
           files prefix: cor_3D_gfs
           overriding sampling file: var-mom_3D_2020121421_gfs_sampling
           overriding moments file:
-          - var-mom_3D_2020121421_gfs_mom_000001_1
-          - var-mom_3D_2020121500_gfs_mom_000001_1
-          - var-mom_3D_2020121503_gfs_mom_000001_1
+          - var-mom_3D_2020121421_gfs_mom_000001
+          - var-mom_3D_2020121500_gfs_mom_000001
+          - var-mom_3D_2020121503_gfs_mom_000001
       - model:
           variables:
           - air_pressure_at_surface
@@ -88,9 +88,9 @@ background error:
           files prefix: cor_2D_gfs
           overriding sampling file: var-mom_2D_2020121421_gfs_sampling
           overriding moments file:
-          - var-mom_2D_2020121421_gfs_mom_000001_1
-          - var-mom_2D_2020121500_gfs_mom_000001_1
-          - var-mom_2D_2020121503_gfs_mom_000001_1
+          - var-mom_2D_2020121421_gfs_mom_000001
+          - var-mom_2D_2020121500_gfs_mom_000001
+          - var-mom_2D_2020121503_gfs_mom_000001
       output model files:
       - parameter: cor_a
         component: 1
@@ -171,10 +171,11 @@ background error:
         sub-ensembles: 3
       diagnostics:
         target ensemble size: 30
+      nicas:
+        filter min effective resolution: 0.2
       variance:
         objective filtering: true
         filtering iterations: 1
-        smoother min effective resolution: 0.2
         initial length-scale:
         - variables:
           - air_horizontal_streamfunction

@@ -42,16 +42,7 @@ set( FV3JEDI_LINKER_LANGUAGE CXX )
 # Standard compiler flags
 ################################################################################
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
-set(CMAKE_FORTRAN_STANDARD 08)
-set(CMAKE_FORTRAN_STANDARD_REQUIRED ON)
-set(CMAKE_FORTRAN_EXTENSIONS OFF)
-
+include( fv3jedi_compiler_flags )
 include( fv3jedi_extra_macros )
 option( ENABLE_FV3JEDI_DOC "Build FV3-JEDI documentation" OFF )
 
@@ -81,14 +72,14 @@ find_package( crtm 2.2.3 REQUIRED )
 find_package( ropp-ufo QUIET )
 
 # gsibec
-find_package( gsibec 1.2.1 QUIET )
+find_package( gsibec 1.4.2 QUIET )
 if( gsibec_FOUND )
     message( STATUS "FV3-SABER block GSI is enabled" )
     add_definitions(-DENABLE_GSIBEC=1)
 endif()
 
-# ncep-sp
-find_package( sp QUIET )
+# ncep-ip
+find_package( ip QUIET )
 
 # ufo
 find_package( ufo 1.10.0 REQUIRED )
@@ -249,11 +240,12 @@ if( BUILD_TESTING )
 
   add_subdirectory( test )
 
-  ecbuild_add_test( TARGET fv3jedi_test_tier1_coding_norms
+  ecbuild_add_test( TARGET fv3jedi_coding_norms
                     TYPE SCRIPT
                     COMMAND ${CMAKE_BINARY_DIR}/bin/cpplint.py
                     ARGS --quiet --recursive ${CMAKE_CURRENT_SOURCE_DIR}/src
-                    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin )
+                    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+                    LABELS tier2 )
 endif()
 
 ################################################################################

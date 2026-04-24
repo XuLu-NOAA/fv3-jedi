@@ -63,73 +63,28 @@ background:
 bands:
 - band:
     filter:
-      saber central block:
-        saber block name: ID
-      saber outer blocks:
-      - saber block name: spectral analytical filter
-        function:
-          horizontal daley length: 5000e3
-        normalize filter variance: false
-        active variables:
-        - air_horizontal_streamfunction
-        - air_horizontal_velocity_potential
-        - air_temperature
-        - water_vapor_mixing_ratio_wrt_moist_air
-      - saber block name: spectral to gauss
-        active variables:
-        - eastward_wind
-        - northward_wind
-        - air_horizontal_streamfunction
-        - air_horizontal_velocity_potential
-        - air_temperature
-        - water_vapor_mixing_ratio_wrt_moist_air
-        filter mode: true
-      - saber block name: write variances
-        binning:
-          type: "horizontal global average"
-        field names:
-        - eastward_wind
-        - northward_wind
-        - air_temperature
-        - water_vapor_mixing_ratio_wrt_moist_air
-        instantaneous statistics:
-          multiply fset filename: wb1_variance
-          output path: Data/filtered_pert
-      - saber block name: write fields
-        output path: Data/filtered_pert
-        multiply fset filename: wb1_inc
-      - saber block name: interpolation
-        active variables:
-        - eastward_wind
-        - northward_wind
-        - air_temperature
-        - water_vapor_mixing_ratio_wrt_moist_air
-        filter mode: true
-        inner geometry:
-          function space: StructuredColumns
-          grid:
-            type: regular_gaussian
-            N: 13
-          partitioner: ectrans
-          halo: 1
-        forward interpolator:
-          local interpolator type: oops unstructured grid interpolator
-        inverse interpolator:
-          local interpolator type: oops unstructured grid interpolator
+    - saber block name: diffusion filter
+      read:
+        groups:
+        - variables:
+          - eastward_wind
+          - northward_wind
+          - air_temperature
+          - water_vapor_mixing_ratio_wrt_moist_air
+          horizontal:
+            filepath: Data/diffusion/diffusion_hz
   output:
     model write:
       filetype: auxgrid
       gridtype: latlon
-      filename: Data/filtered_pert/wb1_pert_mb%MEM%_
+      filename: Data/filtered_pert_diffusion/wb1_pert_mb%MEM%_
       member pattern: '%MEM%'
       field io names: *field_io_names
-- band:
-    residual increment from previous bands: true
-  output:
+- output:
     model write:
       filetype: auxgrid
       gridtype: latlon
-      filename: Data/filtered_pert/wb2_pert_mb%MEM%_
+      filename: Data/filtered_pert_diffusion/wb2_pert_mb%MEM%_
       member pattern: '%MEM%'
       field io names: *field_io_names
 
@@ -163,8 +118,8 @@ ensemble:
     pattern: '%mem%'
     nmembers: 10
     zero padding: 3
-
+  
 test:
-  reference filename: testoutput/processperts_gfs.ref
-  test output filename: testoutput/processperts_gfs.test.out
+  reference filename: testoutput/processperts_diffusion.ref
+  test output filename: testoutput/processperts_diffusion.test.out
   float relative tolerance: 1.0e-3

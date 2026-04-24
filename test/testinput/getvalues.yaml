@@ -34,4 +34,4 @@ locations:
         obs errors:
         - 1.2
         - 2.5
-tolerance interpolation: 1.e-2
+tolerance interpolation: 1.0e-3

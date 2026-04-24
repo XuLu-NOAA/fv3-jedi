@@ -9,6 +9,7 @@
 
 #include <map>
 #include <vector>
+#include <chrono>
 
 #include "atlas/functionspace.h"
 #include "atlas/grid.h"
@@ -16,6 +17,7 @@
 #include "atlas/grid/Spacing.h"
 
 #include "oops/base/GeometryData.h"
+#include "oops/util/FieldSetHelpers.h"
 #include "oops/util/Logger.h"
 #include "oops/util/stringFunctions.h"
 #include "oops/util/Timer.h"
@@ -25,6 +27,7 @@
 #include "fv3jedi/Increment/Increment.h"
 #include "fv3jedi/IO/StructuredGrid/IOStructuredGrid.h"
 #include "fv3jedi/State/State.h"
+#include "fv3jedi/Utilities/fv3jedi_vertical_remap.h"
 
 #include <cmath>
 #include <string>
@@ -353,14 +356,11 @@ void IOStructuredGrid::read(State & x,
 
   // ============================================================
   // 1) Optional regional subset (lon/lat bounds) to reduce I/O
-  //    - Uses params_.lon_min/lon_max/lat_min/lat_max when provided
-  //    - Adds a small halo (buffer) around requested window
   // ============================================================
   size_t lat_start = 0, lat_count = nLat, lon_start = 0, lon_count = nLon;
   const size_t halo = 10;
 
-  int use_regional_subset_i = 0;  // broadcastable
-  
+  int use_regional_subset_i = 0;
   double lon_min=-180.0, lon_max=180.0, lat_min=-90.0, lat_max=90.0;
 
   if (params_.lon_min.value() != boost::none) { lon_min = *params_.lon_min.value(); use_regional_subset_i = 1; }
@@ -369,7 +369,6 @@ void IOStructuredGrid::read(State & x,
   if (params_.lat_max.value() != boost::none) { lat_max = *params_.lat_max.value(); use_regional_subset_i = 1; }
 
   const bool fileNorthToSouth = (fileNorthToSouth_i != 0);
-
   const double lat_lo_user = std::min(lat_min, lat_max);
   const double lat_hi_user = std::max(lat_min, lat_max);
   const double lon_lo_user = std::min(lon_min, lon_max);
@@ -398,7 +397,6 @@ void IOStructuredGrid::read(State & x,
     double search_lon_min = lon_lo_user;
     double search_lon_max = lon_hi_user;
 
-    // If file uses 0..360 and user gave -180..180, convert into 0..360
     if (!file_lons.empty() && file_lons.back() > 180.0) {
       oops::Log::info() << "User bounds: lon=[" << lon_lo_user << "," << lon_hi_user
                         << "] lat=[" << lat_lo_user << "," << lat_hi_user << "]" << std::endl;
@@ -411,7 +409,6 @@ void IOStructuredGrid::read(State & x,
       }
     }
 
-    // Latitude search in ascending array
     std::vector<double> lats_asc = file_lats;
     if (fileNorthToSouth) std::reverse(lats_asc.begin(), lats_asc.end());
 
@@ -423,13 +420,11 @@ void IOStructuredGrid::read(State & x,
     size_t idx_lon_hi = bound_index(file_lons, search_lon_max, false);
     if (idx_lon_lo > idx_lon_hi) std::swap(idx_lon_lo, idx_lon_hi);
 
-    // Expand by halo
     idx_lat_lo = (idx_lat_lo > halo) ? (idx_lat_lo - halo) : 0;
     idx_lat_hi = std::min(idx_lat_hi + halo, nLat - 1);
     idx_lon_lo = (idx_lon_lo > halo) ? (idx_lon_lo - halo) : 0;
     idx_lon_hi = std::min(idx_lon_hi + halo, nLon - 1);
 
-    // Map back to file indexing if file lat is descending
     size_t lat_start_file = 0, lat_end_file = 0;
     if (fileNorthToSouth) {
       lat_start_file = (nLat - 1) - idx_lat_hi;
@@ -451,7 +446,7 @@ void IOStructuredGrid::read(State & x,
       << "Regional subset indices: "
       << "  Latitude:  [" << lat_start << ":" << lat_end_print << "] = "
       << file_lats[lat_start] << " to " << file_lats[lat_end_print]
-      << "  Longitude: [" << lon_start << ":" << lon_end_print << "] = " 
+      << "  Longitude: [" << lon_start << ":" << lon_end_print << "] = "
       << file_lons[lon_start] << " to " << file_lons[lon_end_print]
       << "  Data reduction: " << lat_count << " x " << lon_count
       << " (was " << nLat << " x " << nLon << ")" << std::endl;
@@ -469,7 +464,7 @@ void IOStructuredGrid::read(State & x,
   const size_t lon_end = lon_start + lon_count - 1;
 
   // ============================================================
-  // 2) Pull State FieldSet and get model levels (81)
+  // 2) Pull State FieldSet and get model levels
   // ============================================================
   atlas::FieldSet fieldsModelAll;
   x.toFieldSet(fieldsModelAll);
@@ -487,65 +482,51 @@ void IOStructuredGrid::read(State & x,
   if (nLevModel <= 1) ABORT("Model State appears not to have 3D levels (nLevModel<=1)");
 
   // ============================================================
-  // 3) Load ak/bk once (cached member function you added)
+  // 3) Load ak/bk once (target model coordinate)
   // ============================================================
-  loadAkBkOnce_(nLevModel);  // fills ak_ and bk_ (size nLevModel+1)
+  loadAkBkOnce_(nLevModel);
 
   // ============================================================
-  // 4) Variable mapping - read from configuration
+  // 4) Variable mapping
   // ============================================================
   struct Var3D { std::string stateName; std::string fileName; };
   std::vector<Var3D> vars3d;
-  
-  // Get state variables from State object
-  const auto& stateVars = x.variables();
-  
-  // Get field io names mapping from fileionames config
+
+  const auto & stateVars = x.variables();
+
   std::map<std::string, std::string> ioNameMap;
   if (fileionames.has("field io names")) {
     eckit::LocalConfiguration ionames = fileionames.getSubConfiguration("field io names");
     std::vector<std::string> keys = ionames.keys();
-    for (const auto& key : keys) {
+    for (const auto & key : keys) {
       ioNameMap[key] = ionames.getString(key);
     }
   } else {
     std::vector<std::string> keys = fileionames.keys();
-    for (const auto& key : keys) {
-      // Defensive: only pull string values; if a non-string sneaks in, skip it.
+    for (const auto & key : keys) {
       try {
         ioNameMap[key] = fileionames.getString(key);
       } catch (...) {
-        // ignore non-string entries
       }
     }
   }
 
-  // Build vars3d list from state variables
-  // Skip 2D variables (surface pressure will be handled separately)
   const std::vector<std::string> skip2D = {"air_pressure_at_surface", "surface_pressure"};
-  
   for (size_t i = 0; i < stateVars.size(); ++i) {
     std::string varName = stateVars[i].name();
-    // Skip 2D variables
-    if (std::find(skip2D.begin(), skip2D.end(), varName) != skip2D.end()) {
-      continue;
-    }
-    // Determine file name - use mapping if provided, otherwise use state name
+    if (std::find(skip2D.begin(), skip2D.end(), varName) != skip2D.end()) continue;
     std::string fileName = varName;
-    if (ioNameMap.count(varName) > 0) {
-      fileName = ioNameMap[varName];
-    }
+    if (ioNameMap.count(varName) > 0) fileName = ioNameMap[varName];
     vars3d.push_back({varName, fileName});
   }
-  
+
   if (rank == 0) {
     oops::Log::info() << "[I/O] Reading " << vars3d.size() << " 3D variables:" << std::endl;
-    for (const auto& v : vars3d) {
+    for (const auto & v : vars3d) {
       oops::Log::info() << "  " << v.stateName << " <- " << v.fileName << std::endl;
     }
   }
 
-  // Verify all required variables exist in State
   for (const auto & v : vars3d) {
     if (!fieldsModelAll.has(v.stateName)) {
       if (rank == 0) oops::Log::error() << "State missing required field: " << v.stateName << std::endl;
@@ -560,11 +541,12 @@ void IOStructuredGrid::read(State & x,
   const std::string psName    = "__pressfc__";
 
   // ============================================================
-  // 5) Create source fields on structured FS (levels = nLevFile) and
-  //    temporary target fields on model grid (levels = nLevFile)
+  // 5) Create source fields on structured FS and temporary model-grid
+  //    fields still at FILE vertical levels. Vertical remap will be
+  //    done AFTER horizontal interpolation.
   // ============================================================
   atlas::FieldSet srcFS;
-  atlas::FieldSet tgtGlobal;
+  atlas::FieldSet tgtModelFileLevels;
 
   auto make_model_tmp = [&](const std::string & name, int levels) -> atlas::Field {
     return geom_.functionSpace().createField<double>(
@@ -574,272 +556,202 @@ void IOStructuredGrid::read(State & x,
   for (const auto & v : vars3d) {
     srcFS.add(readFunctionSpace_->createField<double>(
       atlas::option::name(v.stateName) | atlas::option::levels(static_cast<int>(nLevFile))));
-    tgtGlobal.add(make_model_tmp(v.stateName, static_cast<int>(nLevFile)));
+    tgtModelFileLevels.add(make_model_tmp(v.stateName, static_cast<int>(nLevFile)));
   }
 
-  // dpres (3D, nLevFile) and pressfc (2D)
   srcFS.add(readFunctionSpace_->createField<double>(
     atlas::option::name(dpresName) | atlas::option::levels(static_cast<int>(nLevFile))));
-  tgtGlobal.add(make_model_tmp(dpresName, static_cast<int>(nLevFile)));
+  tgtModelFileLevels.add(make_model_tmp(dpresName, static_cast<int>(nLevFile)));
 
   srcFS.add(readFunctionSpace_->createField<double>(
     atlas::option::name(psName) | atlas::option::levels(1)));
-  tgtGlobal.add(make_model_tmp(psName, 1));
+  tgtModelFileLevels.add(make_model_tmp(psName, 1));
 
-  // required metadata for interpolator
   auto set_interp_type = [&](atlas::FieldSet & fs, const std::string & val) {
     for (auto & f : fs) {
       if (!f.metadata().has("interp_type")) f.metadata().set("interp_type", val);
     }
   };
   set_interp_type(srcFS, "default");
-  set_interp_type(tgtGlobal, "default");
+  set_interp_type(tgtModelFileLevels, "default");
 
   // ============================================================
-  // 6) Read slabs (rank0) + bcast + fill structured srcFS + haloExchange
+  // 6) Read slabs (level-parallel I/O) into structured srcFS
   // ============================================================
-  double t_read_rank0 = 0.0, t_bcast = 0.0, t_fill = 0.0;
   const auto gidxView  = atlas::array::make_view<atlas::gidx_t,1>(readFunctionSpace_->global_index());
   const auto ghostView = atlas::array::make_view<int,1>(readFunctionSpace_->ghost());
-  // ============================================================
-  // LEVEL-PARALLEL I/O: Distribute 2D slices across all ranks
-  // ============================================================
+
   const int n_ranks = geom_.getComm().size();
-  
-  // Structure to hold variable info
+
   struct VarInfo {
     std::string fileName;
     std::string stateName;
     int nLevels;
     bool is3D;
   };
-  
-  // Build list of all variables to read
+
   std::vector<VarInfo> all_vars;
   for (const auto & v : vars3d) {
     all_vars.push_back({v.fileName, v.stateName, static_cast<int>(nLevFile), true});
   }
   all_vars.push_back({"dpres", dpresName, static_cast<int>(nLevFile), true});
   all_vars.push_back({"pressfc", psName, 1, false});
-  
-  // Create work items: each is a (variable, level) pair
+
   struct SliceWork {
     int var_idx;
     int level_idx;
   };
-  
+
   std::vector<SliceWork> all_slices;
   for (int v = 0; v < static_cast<int>(all_vars.size()); ++v) {
     for (int lev = 0; lev < all_vars[v].nLevels; ++lev) {
       all_slices.push_back({v, lev});
     }
   }
-  
+
   const int total_slices = static_cast<int>(all_slices.size());
   const int slices_per_rank = (total_slices + n_ranks - 1) / n_ranks;
-  
+
   if (rank == 0) {
-    oops::Log::info() << "[I/O LEVEL-PARALLEL] " << total_slices 
+    oops::Log::info() << "[I/O LEVEL-PARALLEL] " << total_slices
                       << " 2D slices distributed across " << n_ranks << " ranks ("
                       << slices_per_rank << " slices/rank avg)" << std::endl;
   }
-  
-  // Each rank opens file
+
   int ncid;
   nc_rc(nc_open(inFile.c_str(), NC_NOWRITE, &ncid), "nc_open " + inFile);
-  
+
   auto t_read_start = clock_t::now();
-  
-  // Storage: var_idx -> level_idx -> data
   std::map<int, std::map<int, std::vector<float>>> my_slices;
-  
   const size_t plane_size = lat_count * lon_count;
-  
-  // Read slices assigned to this rank (round-robin distribution)
+
   int my_slice_count = 0;
   for (int s = rank; s < total_slices; s += n_ranks) {
-    const auto& work = all_slices[s];
+    const auto & work = all_slices[s];
     const int v_idx = work.var_idx;
     const int lev_idx = work.level_idx;
-    const auto& var = all_vars[v_idx];
+    const auto & var = all_vars[v_idx];
+
     std::vector<float> slice_data(plane_size);
     int varid;
-    nc_rc(nc_inq_varid(ncid, var.fileName.c_str(), &varid), 
-          "nc_inq_varid " + var.fileName);
-    
+    nc_rc(nc_inq_varid(ncid, var.fileName.c_str(), &varid), "nc_inq_varid " + var.fileName);
+
     if (var.is3D) {
-      // Read single 2D slice at this level
       size_t start[4] = {0, static_cast<size_t>(lev_idx), lat_start, lon_start};
       size_t count[4] = {1, 1, lat_count, lon_count};
       nc_rc(nc_get_vara_float(ncid, varid, start, count, slice_data.data()),
             "nc_get_vara_float " + var.fileName);
     } else {
-      // 2D variable (only one level)
       size_t start[3] = {0, lat_start, lon_start};
       size_t count[3] = {1, lat_count, lon_count};
       nc_rc(nc_get_vara_float(ncid, varid, start, count, slice_data.data()),
             "nc_get_vara_float " + var.fileName);
     }
-    
+
     my_slices[v_idx][lev_idx] = std::move(slice_data);
     my_slice_count++;
   }
-  
+
   nc_rc(nc_close(ncid), "nc_close");
-  
   double t_read_local = sec(t_read_start, clock_t::now());
-  
+
   if (rank == 0 || rank == n_ranks - 1) {
-    oops::Log::info() << "[I/O rank " << rank << "] read " << my_slice_count 
+    oops::Log::info() << "[I/O rank " << rank << "] read " << my_slice_count
                       << " slices in " << t_read_local << "s" << std::endl;
   }
-  
-  // ============================================================
-  // Gather slices and assemble variables
-  // Process each variable sequentially, gathering its levels
-  // ============================================================
+
   auto t_gather_start = clock_t::now();
-  
   for (int v = 0; v < static_cast<int>(all_vars.size()); ++v) {
-    const auto& var = all_vars[v];
-    
-    // Assemble full 3D variable from 2D slices
+    const auto & var = all_vars[v];
     std::vector<float> full_var(plane_size * var.nLevels);
-    
-    // Gather each level
+
+    int var_slice_offset = 0;
+    for (int vv = 0; vv < v; ++vv) var_slice_offset += all_vars[vv].nLevels;
+
     for (int lev = 0; lev < var.nLevels; ++lev) {
-      // Find which rank has this slice
-      int slice_global_idx = 0;
-      for (int vv = 0; vv < v; ++vv) {
-        slice_global_idx += all_vars[vv].nLevels;
-      }
-      slice_global_idx += lev;
-      
-      int owner_rank = slice_global_idx % n_ranks;
-      
+      const int slice_global_idx = var_slice_offset + lev;
+      const int owner_rank = slice_global_idx % n_ranks;
       std::vector<float> level_data(plane_size);
-      
-      // Owner rank provides data
-      if (rank == owner_rank) {
-        level_data = my_slices[v][lev];
-      }
-      
-      // Broadcast this level to all ranks
+      if (rank == owner_rank) level_data = my_slices[v][lev];
       geom_.getComm().broadcast(level_data.begin(), level_data.end(), owner_rank);
-      
-      // Copy into full variable array
-      std::copy(level_data.begin(), level_data.end(), 
-                full_var.begin() + lev * plane_size);
+      std::copy(level_data.begin(), level_data.end(), full_var.begin() + lev * plane_size);
     }
-    
-    // Now fill the Atlas field from full_var
+
     atlas::Field & field = srcFS.field(var.stateName);
     auto v_view = atlas::array::make_view<double, 2>(field);
     const int nLev = var.nLevels;
-    
-    // Init to NaN
-    for (atlas::idx_t p = 0; p < v_view.shape(0); ++p)
-      for (int k = 0; k < nLev; ++k)
-        v_view(p, k) = nan;
-    
-    // Fill owned points
+
+    for (atlas::idx_t p = 0; p < v_view.shape(0); ++p) {
+      for (int k = 0; k < nLev; ++k) v_view(p, k) = nan;
+    }
+
     for (atlas::idx_t p = 0; p < v_view.shape(0); ++p) {
       if (ghostView(p) != 0) continue;
       const auto gidx = gidxView(p);
       if (gidx <= 0) continue;
-      
+
       const std::size_t g = static_cast<std::size_t>(gidx) - 1;
       const std::size_t i = g % nLon;
       const std::size_t j = g / nLon;
       if (i >= nLon || j >= nLat) continue;
-      
+
       if (use_regional_subset) {
         if (i < lon_start || i > lon_end || j < lat_start || j > lat_end) continue;
       }
-      
+
       const std::size_t ii = i - lon_start;
       const std::size_t jj = j - lat_start;
-      
       for (int k = 0; k < nLev; ++k) {
         const size_t idx = (static_cast<size_t>(k) * lat_count + jj) * lon_count + ii;
         v_view(p, k) = static_cast<double>(full_var[idx]);
       }
     }
-    
+
     readFunctionSpace_->haloExchange(field);
   }
-  
+
   double t_gather = sec(t_gather_start, clock_t::now());
-  
-  // Report timing
   double t_read_max = t_read_local;
   geom_.getComm().allReduceInPlace(t_read_max, eckit::mpi::Operation::MAX);
-  
   log0t("[TIMER LEVEL-PARALLEL] NetCDF read (parallel across levels, max): ", t_read_max);
   log0t("[TIMER LEVEL-PARALLEL] Gather and assemble (broadcasts): ", t_gather);
 
   // ============================================================
-  // 7) STEP 1: Horizontally interpolate ONLY dpres and pressfc first
-  //    (needed for vertical interpolation pressure calculation)
+  // 7) Horizontal interpolation first: file grid -> model grid,
+  //    still preserving FILE vertical levels.
   // ============================================================
-  auto t_h_pressure = clock_t::now();
-  
-  atlas::FieldSet pressureFields_src;
-  atlas::FieldSet pressureFields_tgt;
-  
-  pressureFields_src.add(srcFS.field(dpresName));
-  pressureFields_src.add(srcFS.field(psName));
-  
-  pressureFields_tgt.add(make_model_tmp(dpresName, static_cast<int>(nLevFile)));
-  pressureFields_tgt.add(make_model_tmp(psName, 1));
-  
-  set_interp_type(pressureFields_tgt, "default");
-  
-  // Init to NaN
-  for (auto & f : pressureFields_tgt) {
+  auto t_h0 = clock_t::now();
+
+  for (auto & f : tgtModelFileLevels) {
     auto v = atlas::array::make_view<double, 2>(f);
-    for (atlas::idx_t p = 0; p < v.shape(0); ++p)
-      for (int k = 0; k < v.shape(1); ++k)
-        v(p, k) = nan;
+    for (atlas::idx_t p = 0; p < v.shape(0); ++p) {
+      for (int k = 0; k < v.shape(1); ++k) v(p, k) = nan;
+    }
   }
-  
-  interpolatorBack_->apply(pressureFields_src, pressureFields_tgt);
-  
-  double t_h_pressure_time = sec(t_h_pressure, clock_t::now());
-  
+
+  interpolatorBack_->apply(srcFS, tgtModelFileLevels);
+  log0t("[TIMER] horizontal interp (file->model @file-levels): ", sec(t_h0, clock_t::now()));
+
   // ============================================================
-  // 8) STEP 2: Vertical interpolation ON FILE GRID
+  // 8) Vertical remap on MODEL grid: file levels -> model levels
   // ============================================================
   auto t_v0 = clock_t::now();
-  
-  // Create fields at file grid with MODEL levels (81)
-  atlas::FieldSet srcFS_modelLevels;
+
+  atlas::FieldSet tgtModelRemapped;
   for (const auto & v : vars3d) {
-    srcFS_modelLevels.add(readFunctionSpace_->createField<double>(
-      atlas::option::name(v.stateName) | atlas::option::levels(nLevModel)));
+    tgtModelRemapped.add(make_model_tmp(v.stateName, nLevModel));
   }
-  
-  // Set interp_type metadata for new fields
-  set_interp_type(srcFS_modelLevels, "default");
-  
-  // Get pressure fields at model grid (needed for target pressures)
-  auto dpresV_tgt = atlas::array::make_view<double, 2>(pressureFields_tgt.field(dpresName));
-  auto psV_tgt = atlas::array::make_view<double, 2>(pressureFields_tgt.field(psName));
-  
-  // Get source dpres and ps at file grid
-  auto dpresV_src = atlas::array::make_view<double, 2>(srcFS.field(dpresName));
-  auto psV_src = atlas::array::make_view<double, 2>(srcFS.field(psName));
-  
-  // Model ps from State
-  auto psState = atlas::array::make_view<double, 2>(fieldsModelAll.field("air_pressure_at_surface"));
-  
-  // Log-pressure interpolation helper
+  set_interp_type(tgtModelRemapped, "default");
+
+  auto dpresV_model_fileLev = atlas::array::make_view<double, 2>(tgtModelFileLevels.field(dpresName));
+  auto psV_model            = atlas::array::make_view<double, 2>(tgtModelFileLevels.field(psName));
+  auto psState              = atlas::array::make_view<double, 2>(fieldsModelAll.field("air_pressure_at_surface"));
+
   auto interp_logp = [&](const std::vector<double> & p_src,
                          const std::vector<double> & x_src,
                          double p_tgt) -> double {
     const size_t n = p_src.size();
     if (n < 2) return x_src.empty() ? nan : x_src.front();
-
     if (p_tgt <= p_src.front()) return x_src.front();
     if (p_tgt >= p_src.back())  return x_src.back();
 
@@ -851,134 +763,104 @@ void IOStructuredGrid::read(State & x,
     const double p2 = std::max(1.0, p_src[k2]);
     const double x1 = x_src[k1];
     const double x2 = x_src[k2];
+    const double denom = std::log(p2) - std::log(p1);
+    if (std::abs(denom) < 1.0e-12) return x1;
 
-    const double w = (std::log(std::max(1.0, p_tgt)) - std::log(p1)) /
-                     (std::log(p2) - std::log(p1));
+    const double w = (std::log(std::max(1.0, p_tgt)) - std::log(p1)) / denom;
     return x1 + w * (x2 - x1);
   };
-  
-  // Pressure work buffers
+
   std::vector<double> p_int_src(nLevFile + 1);
   std::vector<double> p_mid_src(nLevFile);
   std::vector<double> p_int_tgt(nLevModel + 1);
   std::vector<double> p_mid_tgt(nLevModel);
   std::vector<double> x_src(nLevFile);
-  
-  // Do vertical interpolation at FILE GRID
-  const atlas::idx_t npts_file = srcFS_modelLevels.field(vars3d[0].stateName).shape(0);
-  
+
+  const atlas::idx_t npts_model = psV_model.shape(0);
   for (const auto & vinfo : vars3d) {
-    auto srcVar_fileLev = atlas::array::make_view<double, 2>(srcFS.field(vinfo.stateName));  // file grid, e.g. 127 levels
-    auto dstVar_modLev = atlas::array::make_view<double, 2>(srcFS_modelLevels.field(vinfo.stateName));  // file grid, e.g. 81 levels
-    
-    for (atlas::idx_t p = 0; p < npts_file; ++p) {
-      // Source interface/mid pressures from dpres + ps at FILE grid
+    auto srcVar_fileLev = atlas::array::make_view<double, 2>(tgtModelFileLevels.field(vinfo.stateName));
+    auto dstVar_modLev  = atlas::array::make_view<double, 2>(tgtModelRemapped.field(vinfo.stateName));
+
+    for (atlas::idx_t p = 0; p < npts_model; ++p) {
       p_int_src[0] = 0.0;
       for (size_t k = 0; k < nLevFile; ++k) {
-        double dp = dpresV_src(p, static_cast<int>(k));
+        double dp = dpresV_model_fileLev(p, static_cast<int>(k));
         if (!std::isfinite(dp) || dp < 0.0) dp = 0.0;
         p_int_src[k + 1] = p_int_src[k] + dp;
       }
-      
-      double ps_src = psV_src(p, 0);
-      if (!std::isfinite(ps_src) || ps_src <= 0.0) ps_src = p_int_src[nLevFile];
-      
+
+      double ps_col = psV_model(p, 0);
+      if ((!std::isfinite(ps_col) || ps_col <= 0.0) && p_int_src[nLevFile] > 0.0) {
+        ps_col = p_int_src[nLevFile];
+      }
+      if ((!std::isfinite(ps_col) || ps_col <= 0.0) && std::isfinite(psState(p, 0)) && psState(p, 0) > 0.0) {
+        ps_col = psState(p, 0);
+      }
+
       const double sumdp = p_int_src[nLevFile];
-      const double scale = (sumdp > 0.0 && ps_src > 0.0) ? (ps_src / sumdp) : 1.0;
-      
+      const double scale = (sumdp > 0.0 && ps_col > 0.0) ? (ps_col / sumdp) : 1.0;
       for (size_t k = 0; k <= nLevFile; ++k) p_int_src[k] *= scale;
-      
+
       for (size_t k = 0; k < nLevFile; ++k) {
         p_mid_src[k] = 0.5 * (p_int_src[k] + p_int_src[k + 1]);
         if (p_mid_src[k] < 1.0) p_mid_src[k] = 1.0;
+        x_src[k] = srcVar_fileLev(p, static_cast<int>(k));
       }
-      
-      // Target pressures using ps from FILE grid
+
       for (int k = 0; k <= nLevModel; ++k) {
-        p_int_tgt[k] = ak_[k] + bk_[k] * ps_src;
+        p_int_tgt[k] = ak_[k] + bk_[k] * ps_col;
         if (p_int_tgt[k] < 1.0) p_int_tgt[k] = 1.0;
       }
       for (int k = 0; k < nLevModel; ++k) {
         p_mid_tgt[k] = 0.5 * (p_int_tgt[k] + p_int_tgt[k + 1]);
         if (p_mid_tgt[k] < 1.0) p_mid_tgt[k] = 1.0;
       }
-      
-      // Source profile values
-      for (size_t k = 0; k < nLevFile; ++k) {
-        x_src[k] = srcVar_fileLev(p, static_cast<int>(k));
-      }
-      
-      // Interpolate to model levels
+
       for (int k = 0; k < nLevModel; ++k) {
         dstVar_modLev(p, k) = interp_logp(p_mid_src, x_src, p_mid_tgt[k]);
       }
     }
   }
-  
-  log0t("[TIMER] vertical remap (file-grid, file-levels->model-levels): ", sec(t_v0, clock_t::now()));
-  
+
+  log0t("[TIMER] vertical remap (model-grid, file-levels->model-levels): ", sec(t_v0, clock_t::now()));
+
   // ============================================================
-  // 9) STEP 3: Horizontal interpolation at MODEL LEVELS (81 levels)
-  // ============================================================
-  auto t_h0 = clock_t::now();
-  
-  // Create target fields at model grid with model levels
-  atlas::FieldSet tgtGlobal_modelLevels;
-  for (const auto & v : vars3d) {
-    tgtGlobal_modelLevels.add(make_model_tmp(v.stateName, nLevModel));
-  }
-  
-  // Set interp_type metadata
-  set_interp_type(tgtGlobal_modelLevels, "default");
-  
-  // Init to NaN
-  for (auto & f : tgtGlobal_modelLevels) {
-    auto v = atlas::array::make_view<double, 2>(f);
-    for (atlas::idx_t p = 0; p < v.shape(0); ++p)
-      for (int k = 0; k < v.shape(1); ++k)
-        v(p, k) = nan;
-  }
-  
-  // Horizontal interpolation
-  interpolatorBack_->apply(srcFS_modelLevels, tgtGlobal_modelLevels);
-  
-  double t_h_total = sec(t_h0, clock_t::now()) + t_h_pressure_time;
-  log0t("[TIMER] horizontal interp (file->model @model-levels): ", t_h_total);
-  
-  // ============================================================
-  // 10) Copy to State
+  // 9) Copy remapped fields into State and update surface pressure
   // ============================================================
   for (const auto & vinfo : vars3d) {
-    auto src = atlas::array::make_view<double, 2>(tgtGlobal_modelLevels.field(vinfo.stateName));
+    auto src = atlas::array::make_view<double, 2>(tgtModelRemapped.field(vinfo.stateName));
     auto dst = atlas::array::make_view<double, 2>(fieldsModelAll.field(vinfo.stateName));
-    
     for (atlas::idx_t p = 0; p < dst.shape(0); ++p) {
-      for (int k = 0; k < nLevModel; ++k) {
-        dst(p, k) = src(p, k);
-      }
+      for (int k = 0; k < nLevModel; ++k) dst(p, k) = src(p, k);
     }
   }
-  
-  // Update surface pressure
+
   for (atlas::idx_t p = 0; p < psState.shape(0); ++p) {
-    const double v = psV_tgt(p, 0);
+    const double v = psV_model(p, 0);
     if (std::isfinite(v) && v > 0.0) psState(p, 0) = v;
   }
 
   // ============================================================
-  // 11) Copy back to State
+  // 10) Copy back to State
   // ============================================================
   auto t_from0 = clock_t::now();
   x.fromFieldSet(fieldsModelAll);
   log0t("[TIMER] fromFieldSet: ", sec(t_from0, clock_t::now()));
 
   // ============================================================
-  // 12) If mode=="both", write interpolated state as fms restart
+  // 11) If mode=="both", write interpolated state as fms restart
   // ============================================================
   const std::string mode = (params_.mode.value() != boost::none) ? *params_.mode.value() : "read";
   if (mode == "both") {
     if (params_.output_datapath.value() == boost::none) {
       ABORT("IOStructuredGrid: mode is 'both' but no output datapath specified");
+    }
+    if (params_.output_filename_core.value() == boost::none ||
+        params_.output_filename_trcr.value() == boost::none ||
+        params_.output_filename_sfcd.value() == boost::none ||
+        params_.output_filename_sfcw.value() == boost::none ||
+        params_.output_filename_cplr.value() == boost::none) {
+      ABORT("IOStructuredGrid: mode is 'both' but one or more output restart filenames are missing");
     }
     auto t_write0 = clock_t::now();
     eckit::LocalConfiguration outputConfig;
@@ -1021,9 +903,35 @@ void IOStructuredGrid::interpAndWrite(const T & obj, const std::string & label,
   // Apply interpolation
   interpolator_->apply(fieldsCubeSphere, fieldsGeographic);
 
-  // Write to disk if rank 0
-  if (geom_.getComm().rank() == 0) {
-    this->writeStructuredFields(fieldsGeographic, obj.validTime(), fileionames, fileioscaling);
+  // If orography filename is provided, remap vertical coordinates
+  if ( !params_.doVerticalRemapping.value() ) {
+    // Write to disk if rank 0
+    if (geom_.getComm().rank() == 0) {
+      this->writeStructuredFields(fieldsGeographic, obj.validTime(), fileionames, fileioscaling);
+    }
+  } else {
+    ASSERT(params_.orographyFilename.value() != boost::none);
+
+    // Define orography variables
+    atlas::FieldSet fieldsOrog;
+    atlas::Field zsOrogNew = fieldsGeographic["geopotential_height_at_surface"].clone();
+    fieldsOrog.add(zsOrogNew);
+
+    // Write to disk if rank 0
+    if (geom_.getComm().rank() == 0) {
+      // Read structured-grid orography from file
+      const std::string orogFilename = params_.orographyFilename.value().value();
+      this -> readStructuredFields(orogFilename, fieldsOrog, obj.validTime(),
+                                   fileionames, fileioscaling);
+
+      // Remap the vertical coordinates to account for orography changes
+      fv3jedi::VertRemap vert_remap(geom_, fieldsOrog);
+      atlas::FieldSet fieldsGeographicRemap = vert_remap.remap(fieldsGeographic);
+
+      // Write to disk
+      this->writeStructuredFields(fieldsGeographicRemap, obj.validTime(),
+                                  fileionames, fileioscaling);
+    }
   }
 
   oops::Log::trace() << classname() << " write " << label << " done" << std::endl;
@@ -1295,6 +1203,160 @@ void IOStructuredGrid::writeStructuredFields(const atlas::FieldSet & fields,
   // Close netCDF file
   // -----------------
   nc_rc(nc_close(fileId), "nc_close");
+}
+
+// -------------------------------------------------------------------------------------------------
+
+void IOStructuredGrid::readStructuredFields(const std::string pathFile,
+                                            atlas::FieldSet & fields,
+                                            const util::DateTime & time,
+                                            const eckit::LocalConfiguration & ioNames,
+                                            const eckit::LocalConfiguration & ioScaling) const {
+  // NetCDF IDs
+  int fileId;
+
+  // Open a file to read fields from
+  // -------------------------------
+  nc_rc(nc_open(pathFile.c_str(), NC_NOWRITE, &fileId), "nc_open " + pathFile);
+
+  // Get file number of dimensions + their IDs
+  // -----------------------------------------
+  int ndims;
+  nc_inq_ndims(fileId, &ndims);
+
+  std::vector<int> dimids(ndims);
+  nc_inq_dimids(fileId, &ndims, dimids.data(), 0);
+
+  // Create regular grid for determining lat/lon values
+  // --------------------------------------------------
+  const atlas::RegularGrid regGrid(writeFunctionSpace_->grid());
+
+  // Get grid dimensions
+  // -------------------
+  const int nLat = regGrid.ny();
+  const int nLon = regGrid.nx();
+  const int nLev = geom_.npz();
+  const int nEdg = geom_.npz() + 1;
+  const int nTim = 1;
+
+  // Ensure that the lat and lon dimensions are found and have the correct lengths
+  size_t dimSize;
+  bool hasLat = false;
+  bool hasLon = false;
+  bool hasLev = false;
+  bool hasEdg = false;
+  bool hasTim = false;
+  int latId;
+  int lonId;
+  int levId;
+  int edgId;
+  int timId;
+  for (int i = 0; i < ndims; ++i) {
+    // Get the name and size of the dimension
+    char dimName[NC_MAX_NAME + 1];
+    nc_rc(nc_inq_dim(fileId, dimids[i], dimName, &dimSize), "nc_inq_dim");
+
+    if (std::string(dimName) == params_.latName.value().c_str()) {
+      hasLat = true;
+      latId = dimids[i];
+      ASSERT(dimSize == nLat);
+    } else if (std::string(dimName) == params_.lonName.value().c_str()) {
+      hasLon = true;
+      lonId = dimids[i];
+      ASSERT(dimSize == nLon);
+    } else if (std::string(dimName) == params_.levName.value().c_str()) {
+      hasLev = true;
+      levId = dimids[i];
+      ASSERT(dimSize == nLev);
+    } else if (std::string(dimName) == params_.edgName.value().c_str()) {
+      hasEdg = true;
+      edgId = dimids[i];
+      ASSERT(dimSize == nEdg);
+    } else if (std::string(dimName) == params_.timName.value().c_str()) {
+      hasTim = true;
+      timId = dimids[i];
+      ASSERT(dimSize == nTim);
+    }
+  }
+
+  // Ensure required dimensions were found
+  ASSERT(hasLat);
+  ASSERT(hasLon);
+  ASSERT(hasLev);
+  ASSERT(hasEdg);
+  ASSERT(hasTim);
+
+  // Read the fields from the file
+  // -------------------------------
+  for (auto & field : fields) {
+    // Get IO name for this field
+    std::string fieldName = field.name();
+    if (ioNames.has(fieldName)) {
+      fieldName = ioNames.getString(field.name());
+    }
+
+    // Get the variable ID for this field
+    int varId;
+    nc_rc(nc_inq_varid(fileId, fieldName.c_str(), &varId), "nc_inq_varid " + fieldName);
+
+    // Get number of dimensions + their IDs
+    int ndims;
+    int dimids[NC_MAX_VAR_DIMS];
+    nc_rc(nc_inq_var(fileId, varId,
+                     nullptr,   // var name (unused)
+                     nullptr,   // type (unused)
+                     &ndims,
+                     dimids,
+                     nullptr),  // attributes (unused)
+          "nc_inq_var");
+
+    // Ensure that the field has either 3 or 4 dimensions
+    ASSERT(ndims == 3 || ndims == 4);
+
+    // Ensure that the dimensions are in the expected order
+    size_t nLevField = 0;
+    if ( ndims == 3 ) {
+      ASSERT(dimids[0] == timId &&
+             dimids[1] == latId &&
+             dimids[2] == lonId);
+      nLevField = 1;
+    } else if ( ndims == 4 ) {
+      ASSERT((dimids[0] == timId &&
+              dimids[1] == levId &&
+              dimids[2] == latId &&
+              dimids[3] == lonId) ||
+             (dimids[0] == timId &&
+              dimids[1] == edgId &&
+              dimids[2] == latId &&
+              dimids[3] == lonId));
+
+      nLevField = field.shape(1);
+      if ( dimids[1] == edgId ) {
+        ASSERT(nLevField == nEdg);
+      } else {
+        ASSERT(nLevField == nLev);
+      }
+    }
+
+    // Read the variable data
+    std::vector<double> values(field.size());
+
+    nc_rc(nc_get_var_double(fileId, varId, values.data()), "nc_get_var_double " + fieldName);
+
+    // Create field and unpack data into it
+    auto fieldView = atlas::array::make_view<double, 2>(field);
+
+    for (size_t k = 0; k < nLevField; ++k) {
+      for (size_t j = 0; j < nLat; ++j) {
+        for (size_t i = 0; i < nLon; ++i) {
+          fieldView((nLat - 1 - j) * nLon + i, k) = values[ k*nLat*nLon + j*nLon + i ];
+        }
+      }
+    }
+
+    // Close file
+    nc_rc(nc_close(fileId), "nc_close");
+  }
 }
 
 // -------------------------------------------------------------------------------------------------

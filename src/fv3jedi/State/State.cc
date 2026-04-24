@@ -31,6 +31,7 @@
 #include "fv3jedi/Increment/Increment.h"
 #include "fv3jedi/IO/Utils/IOBase.h"
 #include "fv3jedi/State/State.h"
+#include "fv3jedi/Utilities/fv3jedi_vertical_remap.h"
 #include "fv3jedi/VariableChange/VariableChange.h"
 
 namespace fv3jedi {
@@ -41,6 +42,7 @@ State::State(const Geometry & geom, const oops::Variables & vars, const util::Da
   : geom_(geom), vars_(vars), time_(time)
 {
   oops::Log::trace() << "State::State (from geom, vars and time) starting" << std::endl;
+  vars_.sort();
   fv3jedi_state_create_f90(keyState_, geom_.toFortran(), vars_, time_);
   oops::Log::trace() << "State::State (from geom, vars and time) done" << std::endl;
 }
@@ -76,6 +78,7 @@ State::State(const Geometry & geom, const eckit::Configuration & config)
     ASSERT(params.stateVariables.value() != boost::none);
     vars_ = oops::Variables(*params.stateVariables.value());
   }
+  vars_.sort();
 
   // Datetime from the config for read and analytical
   ASSERT(params.datetime.value() != boost::none);
@@ -174,18 +177,32 @@ void State::changeResolution(const State & other) {
   oops::GlobalInterpolator interp(conf, source_geom, target_fs, geom_.getComm());
 
   atlas::FieldSet source{};
-  atlas::FieldSet target{};
+  atlas::FieldSet target_interp{};
 
   // Interpolate atlas::FieldSet representation of fv3 data
   other.toFieldSet(source);
-  interp.apply(source, target);
-  this->fromFieldSet(target);
+  interp.apply(source, target_interp);
+
+  if ( geom_.doVerticalRemapping() ) {
+    ASSERT(geom_.fields().has("surface_geopotential_height"));
+
+    // Remap the vertical coordinates
+    fv3jedi::VertRemap vertRemap(geom_, geom_.fields());
+    atlas::FieldSet target_remap = vertRemap.remap(target_interp);
+
+    // Convert the interpolated and vetically remapped field set back to state
+    this->fromFieldSet(target_remap);
+  } else {
+    // Convert the interpolated field set back to state
+    this->fromFieldSet(target_interp);
+  }
 }
 
 // -------------------------------------------------------------------------------------------------
 
 void State::updateFields(const oops::Variables & newVars) {
   vars_ = newVars;
+  vars_.sort();
   fv3jedi_state_update_fields_f90(keyState_, geom_.toFortran(), vars_);
 }
 
@@ -344,11 +361,10 @@ void State::deserializeSection(const std::vector<double> & vect, int & size_fld,
 void State::transpose(const State & FCState, const eckit::mpi::Comm & global,
     const int ensNum, const int transNum ) {
 
-  int ist_fc, iend_fc, jst_fc, jend_fc, kst_fc, kend_fc, npz_fc;
-  int ist_da, iend_da, jst_da, jend_da, kst_da, kend_da, npz_da;
-  int ist_rcv, iend_rcv, jst_rcv, jend_rcv, kst_rcv, kend_rcv, npz_rcv;
+  int ist_fc, iend_fc, jst_fc, jend_fc;
+  int ist_da, iend_da, jst_da, jend_da;
+  int ist_rcv, iend_rcv, jst_rcv, jend_rcv;
   std::vector<int> local_ens;
-  size_t dataSize = FCState.serialSize()-3;  // would be good to make this a method
   std::vector<double> zz;
   std::vector<int> buf(11);
   std::vector<int> recipients;  // This will contain list of mpi tasks where local tile will be sent
@@ -364,21 +380,12 @@ void State::transpose(const State & FCState, const eckit::mpi::Comm & global,
   iend_fc = global_indices[1];
   jst_fc = global_indices[2];
   jend_fc = global_indices[3];
-  kst_fc = global_indices[4];
-  kend_fc = global_indices[5];
-  npz_fc = global_indices[6];
-  int nxg = iend_fc - ist_fc + 1;
-  int nyg = jend_fc - jst_fc + 1;
-  int nvars = FCState.variables().size();  // number of variable state
 
   std::vector<int> indices = this->geometry().get_indices();
   ist_da = indices[0];  // indices for the da geometry
   iend_da = indices[1];
   jst_da = indices[2];
   jend_da = indices[3];
-  kst_da = indices[4];
-  kend_da = indices[5];
-  npz_da = indices[6];
 
   oops::Log::trace() << "before transpose fcst state is " << FCState << std::endl;
 // TODO(mpotts) convert this loop into an allgather to collect all indices with a single call
@@ -445,7 +452,6 @@ void State::transpose(const State & FCState, const eckit::mpi::Comm & global,
         recv_tasks_.push_back(tileEnsNum[j]);
     } else {  // I already have this forecast state
       // copy from my local version
-      size_t itask = ensNum-1;
       zz_recv = zz;
       indx = 0;
       int size_fld = zz_recv.size();  // get the serialsize of the local tile
@@ -459,7 +465,6 @@ void State::transpose(const State & FCState, const eckit::mpi::Comm & global,
     int ireq = -1;
     eckit::mpi::Status rst = global.waitAny(recv_req_, ireq);
     ASSERT(rst.error() == 0);
-    size_t itask = recv_tasks_[ireq] - 1;
     indx = 0;
     int size_fld = zz_recv.size();  // get the serialsize of the local tile
     this->deserializeSection(zz_recv, size_fld, ist_rcv, iend_rcv,
