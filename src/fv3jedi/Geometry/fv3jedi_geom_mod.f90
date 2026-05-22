@@ -188,6 +188,7 @@ integer                               :: i, j, jj, this_grid, ierr
 integer                               :: p_split = 1
 integer                               :: ncstat, ncid, akvarid, bkvarid, readdim, dcount
 integer, dimension(nf90_max_var_dims) :: dimids, dimlens
+integer                               :: geom_comm
 
 character(len=:), allocatable :: str
 real(kind=kind_real) :: sf, t_lon, t_lat
@@ -199,6 +200,7 @@ type(fv3jedi_fmsnamelist) :: fmsnamelist
 ! Add the communicator to the geometry
 ! ------------------------------------
 self%f_comm = comm
+geom_comm = comm%communicator()
 
 ! Initialize field_masks config
 ! -----------------------------
@@ -321,8 +323,8 @@ allocate(self%jbegin(0:self%layout(2)-1), self%jend(0:self%layout(2)-1))
 self%NSindex=modulo(mpp_pe(),self%layout(1))
 self%EWindex=(mpp_pe()/self%layout(1))
 
-call MPI_Comm_split(MPI_COMM_WORLD, self%NSindex, mpp_pe(), self%rowComm, ierr)
-call MPI_Comm_split(MPI_COMM_WORLD, self%EWindex, mpp_pe(), self%colComm, ierr)
+call MPI_Comm_split(geom_comm, self%NSindex, mpp_pe(), self%rowComm, ierr)
+call MPI_Comm_split(geom_comm, self%EWindex, mpp_pe(), self%colComm, ierr)
 
 call MPI_AllGather(self%isc,1,MPI_integer,self%ibegin(0:),1,MPI_integer, self%colComm, ierr)
 call MPI_AllGather(self%iec,1,MPI_integer,self%iend(0:)  ,1,MPI_integer, self%colComm, ierr)
@@ -335,16 +337,16 @@ call MPI_AllGather(self%jec,1,MPI_integer,self%jend(0:)  ,1,MPI_integer, self%ro
   ! Let other ranks know my row and column index
   allocate(self%MyRowGlobal(0:mpp_npes()-1), self%MyColGlobal(0:mpp_npes()-1))
   self%MyRowGlobal=-999; self%MyColGlobal=-999
-  call MPI_AllGather(self%NSindex,1,MPI_Integer,self%MyRowGlobal,1,MPI_Integer, MPI_COMM_WORLD, ierr)
-  call MPI_AllGather(self%EWindex,1,MPI_Integer,self%MyColGlobal,1,MPI_Integer, MPI_COMM_WORLD, ierr)
+  call MPI_AllGather(self%NSindex,1,MPI_Integer,self%MyRowGlobal,1,MPI_Integer, geom_comm, ierr)
+  call MPI_AllGather(self%EWindex,1,MPI_Integer,self%MyColGlobal,1,MPI_Integer, geom_comm, ierr)
 
   ! Let other ranks know my rank in the row and column communicators
   call MPI_Comm_rank(self%rowComm, self%rowrank, ierr)
   call MPI_Comm_rank(self%colComm, self%colrank, ierr)
   allocate(self%MyRankInRowComm(0:mpp_npes()-1), self%MyRankInColComm(0:mpp_npes()-1))
   self%MyRankInRowComm=-999; self%MyRankInColComm=-999
-  call MPI_AllGather(self%rowrank,1,MPI_Integer,self%MyRankInRowComm,1,MPI_Integer, MPI_COMM_WORLD, ierr)
-  call MPI_AllGather(self%colrank,1,MPI_Integer,self%MyRankInColComm,1,MPI_Integer, MPI_COMM_WORLD, ierr)
+  call MPI_AllGather(self%rowrank,1,MPI_Integer,self%MyRankInRowComm,1,MPI_Integer, geom_comm, ierr)
+  call MPI_AllGather(self%colrank,1,MPI_Integer,self%MyRankInColComm,1,MPI_Integer, geom_comm, ierr)
 
   ! Let other ranks in my row and column know how many rows and columns I have in my subdomain
   allocate(self%NumColsPerRank(0:self%layout(2)-1), self%NumRowsPerRank(0:self%layout(1)-1))
@@ -359,14 +361,14 @@ call MPI_AllGather(self%jec,1,MPI_integer,self%jend(0:)  ,1,MPI_integer, self%ro
   if (self%EWindex== 0) then
     call MPI_Gather(self%localsizes(1),1,MPI_Integer,self%NumRowsPerRank,1,MPI_Integer, 0, self%colComm, ierr)
   endif
-  call MPI_Bcast(self%NumColsPerRank,size(self%NumColsPerRank),MPI_Integer,0,MPI_COMM_WORLD,ierr)
-  call MPI_Bcast(self%NumRowsPerRank,size(self%NumRowsPerRank),MPI_Integer,0,MPI_COMM_WORLD,ierr)
+  call MPI_Bcast(self%NumColsPerRank,size(self%NumColsPerRank),MPI_Integer,0,geom_comm,ierr)
+  call MPI_Bcast(self%NumRowsPerRank,size(self%NumRowsPerRank),MPI_Integer,0,geom_comm,ierr)
 
   ! Create a sub-communicator to handle reads
   self%color=0
   if (self%k>0) self%color=1
 
-  call MPI_Comm_split(mpi_comm_world, self%color, mpp_pe(), self%IOComm, ierr)
+  call MPI_Comm_split(geom_comm, self%color, mpp_pe(), self%IOComm, ierr)
   call MPI_Comm_rank(self%IOComm,self%IORank,ierr)
   call MPI_Comm_size(self%IOComm,self%IOCommSize,ierr)
 

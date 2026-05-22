@@ -21,6 +21,12 @@ ecbuild_add_executable( TARGET  fv3jedi_convertstate.x
                                 saber
                        )
 
+ecbuild_add_executable( TARGET  fv3jedi_ensconvertstate.x
+                        SOURCES fv3jediEnsConvertState.cc
+                        LIBS    ${FV3JEDI_LIBRARIES}
+                                saber
+                      )
+
 ecbuild_add_executable( TARGET  fv3jedi_converttostructuredgrid.x
                         SOURCES fv3jediConvertToStructuredGrid.cc
                         LIBS    ${FV3JEDI_LIBRARIES}
