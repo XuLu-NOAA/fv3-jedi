@@ -593,6 +593,7 @@ character(len=500)  :: tmpvarlist(numfiles)
 character(len=500), allocatable  :: varlist(:)
 integer :: i, j, level, l, n, indexrst, var, var2
 integer :: iret,ilev,r,ncioid,var_id,loc
+integer :: geom_comm
 
 integer(kind=4), allocatable :: nlev(:), nlevpervar(:), numvar(:)
 character(len=20), allocatable :: varnames(:)
@@ -631,6 +632,7 @@ character(len=:), allocatable :: str
 
 rank=mpp_pe()
 npes=mpp_npes()
+geom_comm = geom%f_comm%communicator()
 
 tmpvarlist=''
 
@@ -817,17 +819,17 @@ if( (fields_changed) .or. &
   deallocate(varlist)
 
   ! Let all ranks know what is going on
-  call MPI_Scatter(mpiioarg%fileid  ,  1,   mpi_integer, mype_fileid ,  1, mpi_integer  , 0, MPI_COMM_WORLD,ierr)
-  call MPI_Scatter(mpiioarg%varname , 20, mpi_character, mype_varname, 20, mpi_character, 0, MPI_COMM_WORLD,ierr)
-  call MPI_Scatter(mpiioarg%vartype ,  1,   mpi_integer, mype_vartype,  1, mpi_integer  , 0, MPI_COMM_WORLD,ierr)
-  call MPI_Scatter(mpiioarg%lvlbegin,  1,   mpi_integer, mype_lbegin ,  1, mpi_integer  , 0, MPI_COMM_WORLD,ierr)
-  call MPI_Scatter(mpiioarg%lvlend  ,  1,   mpi_integer, mype_lend   ,  1, mpi_integer  , 0, MPI_COMM_WORLD,ierr)
+  call MPI_Scatter(mpiioarg%fileid  ,  1,   mpi_integer, mype_fileid ,  1, mpi_integer  , 0, geom_comm,ierr)
+  call MPI_Scatter(mpiioarg%varname , 20, mpi_character, mype_varname, 20, mpi_character, 0, geom_comm,ierr)
+  call MPI_Scatter(mpiioarg%vartype ,  1,   mpi_integer, mype_vartype,  1, mpi_integer  , 0, geom_comm,ierr)
+  call MPI_Scatter(mpiioarg%lvlbegin,  1,   mpi_integer, mype_lbegin ,  1, mpi_integer  , 0, geom_comm,ierr)
+  call MPI_Scatter(mpiioarg%lvlend  ,  1,   mpi_integer, mype_lend   ,  1, mpi_integer  , 0, geom_comm,ierr)
 
-  call MPI_Bcast(ntotallev, 1, mpi_integer, 0, MPI_COMM_WORLD,ierr)
-  call MPI_Bcast(nlev, npes, mpi_integer, 0, MPI_COMM_WORLD,ierr)
-  call MPI_Bcast(nlevpervar, sum(numvar), mpi_integer, 0, MPI_COMM_WORLD,ierr)
-  call MPI_Bcast(varnames, 20*sum(numvar), mpi_character, 0, MPI_COMM_WORLD,ierr)
-  call MPI_Bcast(nc_vartype, sum(numvar), mpi_integer, 0, MPI_COMM_WORLD,ierr)
+  call MPI_Bcast(ntotallev, 1, mpi_integer, 0, geom_comm,ierr)
+  call MPI_Bcast(nlev, npes, mpi_integer, 0, geom_comm,ierr)
+  call MPI_Bcast(nlevpervar, sum(numvar), mpi_integer, 0, geom_comm,ierr)
+  call MPI_Bcast(varnames, 20*sum(numvar), mpi_character, 0, geom_comm,ierr)
+  call MPI_Bcast(nc_vartype, sum(numvar), mpi_integer, 0, geom_comm,ierr)
 
   ! Map field level to the process handling that level
   ! LevelToProcMap(levelIndex) gives the rank
@@ -844,7 +846,7 @@ if( (fields_changed) .or. &
 
   if (any(LevelToProcMap(:) == -999)) then
     write(6,'("read_restart_fields_newest: Some sigma level were not assigned")')
-    call MPI_Abort(MPI_COMM_WORLD,10,ierr)
+    call MPI_Abort(geom_comm,10,ierr)
   endif
 
   ! Map combined level to variable
@@ -863,7 +865,7 @@ if( (fields_changed) .or. &
   if (any(LevelToVariableMap(:) == -999)) then
     loc = findloc(LevelToVariableMap, value=-999, dim=1, back=.false.)
     write(6,'("read_restart_fields_newest: Some variables were not assigned ",2I6)') ntotallev,loc
-    call MPI_Abort(MPI_COMM_WORLD,11,ierr)
+    call MPI_Abort(geom_comm,11,ierr)
   endif
 
 
@@ -883,7 +885,7 @@ if( (fields_changed) .or. &
 
   if (any(LevelToLevelMap(:) == -999)) then
     write(6,'("read_restart_fields_newest: Some levels were not assigned")')
-    call MPI_Abort(MPI_COMM_WORLD,12,ierr)
+    call MPI_Abort(geom_comm,12,ierr)
   endif
 
   ! Map JEDI fields array to variable list obtained from above
@@ -908,7 +910,7 @@ if( (fields_changed) .or. &
 
   if (any(VarToVarMap(:) == -999)) then
     write(6,'("read_restart_fields_newest: Some variables not mapped",21I6)') VarToVarMap(1:sum(numvar))
-    call MPI_Abort(MPI_COMM_WORLD,112,ierr)
+    call MPI_Abort(geom_comm,112,ierr)
   endif
 
   ! Create sub-communicator to handle each file
@@ -919,10 +921,10 @@ if( (fields_changed) .or. &
        color = MPI_UNDEFINED
   endif
 
-  call MPI_Comm_split(mpi_comm_world,color,key,read_comm,ierr)
+  call MPI_Comm_split(geom_comm,color,key,read_comm,ierr)
   if ( ierr /= 0 ) then
        write(6,'(a,i5)')'***ERROR*** after mpi_comm_create with iret = ',ierr
-       call mpi_abort(mpi_comm_world,101,ierr)
+       call mpi_abort(geom_comm,101,ierr)
   endif
 
   first_pass = .false.
@@ -997,7 +999,7 @@ endif
     select case (nc_vartype(var))
     case (NF90_SHORT)
       write(6,'("NF90_SHORT data type not supported")')
-      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+      call MPI_Abort(geom_comm, 1, ierr)
     case (NF90_INT)
       if(kind_real /= c_int) then
         allocate(real(kind=c_int) :: fields(var2)%array_file_scatter(geom%localsizes(1), geom%localsizes(2), 1))
@@ -1013,7 +1015,7 @@ endif
       endif
     case default
       write(6,'("read_restart_fields_newest: Unknown NetCDF type for variable: ",3I4,2A)') nc_vartype(var), var, var2,' ',trim(fields(var)%long_name)
-      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+      call MPI_Abort(geom_comm, 1, ierr)
     end select
   enddo
 
@@ -1070,7 +1072,7 @@ endif
 
     iret=nf90_close(ncioid)
   endif ! read_comm
-  call MPI_Barrier(MPI_COMM_WORLD,ierr)
+  call MPI_Barrier(geom_comm,ierr)
   te2 = MPI_Wtime()
   times(2) = te2-tb2
 
@@ -1125,7 +1127,7 @@ endif
   enddo
   te3 = MPI_Wtime()
   times(3) = te3-tb3
-  call MPI_Reduce(times, walltime, 3, MPI_DOUBLE_PRECISION, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(times, walltime, 3, MPI_DOUBLE_PRECISION, MPI_MAX, 0, geom_comm, ierr)
   if (rank == 0) write(*,'(A,4F12.6)') 'read_restart_fields_newest: Walltimes ', walltime(1), walltime(2), walltime(3), sum(walltime)
 
   ! Deallocate temporary arrays
@@ -1204,7 +1206,7 @@ contains
       extent=8
     class default
       write(6,'("TwoPhaseScatterPolymorphic: Unknown type")')
-      call MPI_Abort(MPI_COMM_WORLD, 22, ierr)
+      call MPI_Abort(geom_comm, 22, ierr)
     end select
 
     ! First scatter by columns from owner to rank 0 in the row communicator
@@ -1464,9 +1466,17 @@ integer, dimension(:), allocatable :: chunksizes
 character(len=32) :: chksum
 integer(kind=8) :: chksum_i8
 integer(kind=8) :: mold(1)
+integer :: geom_comm
+integer :: world_rank, world_size, comm_rank, comm_size
 
 rank=mpp_pe()
 npes=mpp_npes()
+geom_comm = geom%f_comm%communicator()
+
+call MPI_Comm_rank(MPI_COMM_WORLD, world_rank, ierr)
+call MPI_Comm_size(MPI_COMM_WORLD, world_size, ierr)
+call MPI_Comm_rank(geom_comm, comm_rank, ierr)
+call MPI_Comm_size(geom_comm, comm_size, ierr)
 
 ! Get datetime
 ! ------------
@@ -1522,7 +1532,8 @@ enddo
 do n = 1, numfiles
   if (rstflag(n)) then
     FileName=trim(self%datapath)//'/'//trim(self%filenames(n))
-    rc = nf90_create(trim(FileName), ior(ior(NF90_CLOBBER,NF90_NETCDF4),NF90_MPIIO), ncid(n), comm=MPI_COMM_WORLD, info=MPI_INFO_NULL)
+    rc = nf90_create(trim(FileName), ior(ior(NF90_CLOBBER,NF90_NETCDF4),NF90_MPIIO), &
+                 ncid(n), comm=geom_comm, info=MPI_INFO_NULL)
     if(rc == nf90_noerr) then
       dimids(:)=-999
       call check ( nf90_set_fill(ncid(n), NF90_FILL, oldMode) )
@@ -1581,7 +1592,7 @@ do n = 1, numfiles
 
         ! Use FMS method to create a checksum
         chksum_i8 = sum(INT(TRANSFER(fields(var2)%array,mold),8))
-        call MPI_ALLREDUCE( MPI_IN_PLACE, chksum_i8, 1, MPI_INTEGER8, MPI_SUM, MPI_COMM_WORLD, ierr )
+        call MPI_ALLREDUCE( MPI_IN_PLACE, chksum_i8, 1, MPI_INTEGER8, MPI_SUM, geom_comm, ierr )
         chksum = ""
         write(chksum, "(Z16)") chksum_i8
         call check( nf90_put_att(ncid(n), varid, "checksum", trim(chksum)) )
@@ -1594,7 +1605,7 @@ do n = 1, numfiles
 
         ! Use FMS method to create a checksum
         chksum_i8 = sum(INT(TRANSFER(fields(var2)%array,mold),8))
-        call MPI_ALLREDUCE( MPI_IN_PLACE, chksum_i8, 1, MPI_INTEGER8, MPI_SUM, MPI_COMM_WORLD, ierr )
+        call MPI_ALLREDUCE( MPI_IN_PLACE, chksum_i8, 1, MPI_INTEGER8, MPI_SUM, geom_comm, ierr )
         chksum = ""
         write(chksum, "(Z16)") chksum_i8
         call check( nf90_put_att(ncid(n), varid, "checksum", trim(chksum)) )
@@ -1603,12 +1614,14 @@ do n = 1, numfiles
   endif
 enddo
 
-
 ! Exit define mode
 ! ----------------
 do n = 1, numfiles
   if (rstflag(n)) then
-    call check( nf90_enddef(ncid(n)) )
+    if (comm_rank == 0) then
+      call flush(6)
+    endif
+    call check_comm( nf90_enddef(ncid(n)), geom_comm )
   endif
 enddo
 
@@ -1978,5 +1991,17 @@ end subroutine dummy_final
       call MPI_Abort(MPI_COMM_WORLD,2,ierr)
     end if
   end subroutine check
+
+subroutine check_comm(status, comm)
+!  use netcdf
+  integer, intent(in) :: status
+  integer, intent(in) :: comm
+  integer :: ierr
+
+  if (status /= nf90_noerr) then
+    print *, trim(nf90_strerror(status))
+    call MPI_Abort(comm, 2, ierr)
+  end if
+end subroutine check_comm
 
 end module fv3jedi_io_fms_mod
