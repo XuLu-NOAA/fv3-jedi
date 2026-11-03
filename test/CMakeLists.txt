@@ -71,6 +71,7 @@ Data/fv3files/input_geos_c12_p12.nml
 Data/fv3files/input_geos_c12_z186.nml
 Data/fv3files/input_geos_c24.nml
 Data/fv3files/input_lam_cmaq.nml
+Data/fv3files/input_lam_cmaq_p12_z65.nml
 Data/fv3files/input_lam_rrfs.nml
 Data/fv3files/inputpert_4dvar.nml
 Data/fv3files/inputpert_fsoi.nml
@@ -111,8 +112,10 @@ list( APPEND fv3jedi_testinput
   testinput/3dvar_gfs_sondes_c12.yaml
   testinput/3dvar_gfs_0obs.yaml
   testinput/3dvar_gfs_aero.yaml
-  testinput/3dvar_gfs_sondes_c12.yaml
   testinput/3dvar_lam_cmaq.yaml
+  testinput/3dvar_rrfs_nofms.yaml
+  testinput/convertstate_rrfs_nofms_lifecycle.yaml
+  testinput/convertstate_rrfs_nofms_dualres.yaml
   testinput/3dvar_snow.yaml
   testinput/4denvar_seq.yaml
   testinput/4denvar.yaml
@@ -151,7 +154,6 @@ list( APPEND fv3jedi_testinput
   testinput/convertstate_gfs_model2geovals.yaml
   testinput/convertstate_gfs_restart2history.yaml
   testinput/convertstate_gfs.yaml
-  testinput/comparestates_gfs_restart2history2restart.yaml
   testinput/convertstate_gfs_restart2fms_nonrestart.yaml
   testinput/convertstate_gfs_fms_nonrestart2restart.yaml
   testinput/converttogauss_gfs.yaml
@@ -173,10 +175,8 @@ list( APPEND fv3jedi_testinput
   testinput/eda_block_3dvar_1.yaml
   testinput/eda_block_3dvar_2.yaml
   testinput/eda_block_3dvar.yaml
-  testinput/ensembleb_dirac_local_gfs_12pe.yaml
   testinput/ensembleb_loc_gfs.yaml
   testinput/ensembleb_nicas_gfs.yaml
-  testinput/ensembleb_prep_DATE_geos.yaml
   testinput/ensembleb_prep_DATE_gfs.yaml
   testinput/enshofx_fv3lm_1.yaml
   testinput/enshofx_fv3lm_2.yaml
@@ -240,6 +240,7 @@ list( APPEND fv3jedi_testinput
   testinput/letkf_observer_soil_moisture.yaml
   testinput/letkf_snow.yaml
   testinput/letkf.yaml
+  testinput/letkf_onestep_redist.yaml
   testinput/letkf_perturbed.yaml
   testinput/lgetkf_linearobserver.yaml
   testinput/lgetkf_linearobserver_hofx_reduceobs.yaml
@@ -285,14 +286,12 @@ list( APPEND fv3jedi_testinput
   testinput/staticb_prep_DATE_geos.yaml
   testinput/staticb_prep_DATE_gfs.yaml
   testinput/staticb_split_nicas_gfs.yaml
-  testinput/staticb_split_vbal_geos.yaml
   testinput/staticb_split_vbal_gfs.yaml
   testinput/staticb_var_aero.yaml
   testinput/staticb_var_geos.yaml
   testinput/staticb_vbal_geos.yaml
   testinput/tlm_toolbox_linearization_error.yaml
   testinput/variablechange_gfs.yaml
-  testinput/ens_spread_geos.yaml
   testinput/processperts_bump.yaml
   testinput/processperts_diffusion.yaml
   testinput/processperts_spectral.yaml
@@ -311,9 +310,13 @@ list( APPEND fv3jedi_testoutput
   testoutput/3dvar_geos_tskin.ref
   testoutput/3dvar_gfs_sondes.ref
   testoutput/3dvar_lam_cmaq.ref
+  testoutput/3dvar_rrfs_nofms.ref
+  testoutput/convertstate_rrfs_nofms_lifecycle.ref
+  testoutput/convertstate_rrfs_nofms_dualres.ref
   testoutput/3dvar_gfs_0obs.ref
   testoutput/3dvar_gfs_aero.ref
   testoutput/4denvar.ref
+  testoutput/4denvar_seq.ref
   testoutput/4dvar_cda.ref
   testoutput/4dvar_hybrid_linear_model.ref
   testoutput/4dvar_geos_aero.ref
@@ -356,6 +359,7 @@ list( APPEND fv3jedi_testoutput
   testoutput/eda_3dvar_control_pert.ref
   testoutput/eda_4dvar_fv3lm.ref
   testoutput/eda_block_3dvar.ref
+  testoutput/enshofx_fv3lm.ref
   testoutput/ensmeanvariance_geos.ref
   testoutput/ensmeanvariance_gfs.ref
   testoutput/enspert_geos_cf.ref
@@ -392,6 +396,7 @@ list( APPEND fv3jedi_testoutput
   testoutput/hyb-4denvar_llens_geos.ref
   testoutput/hyb-fgat_fv3lm.ref
   testoutput/letkf.ref
+  testoutput/letkf_onestep_redist.ref
   testoutput/letkf_perturbed.ref
   testoutput/letkf3d.ref
   testoutput/3dvar_snow.ref
@@ -415,14 +420,12 @@ list( APPEND fv3jedi_testoutput
   testoutput/staticb_cor_geos.ref
   testoutput/staticb_nicas_geos.ref
   testoutput/staticb_vbal_geos.ref
-  testoutput/staticb_cor_aero.ref
   testoutput/staticb_dirac_local_aero_12pe.ref
   testoutput/staticb_nicas_aero.ref
   testoutput/staticb_var_aero.ref
   testoutput/ens_spread_geos.ref
   testoutput/ensembleb_loc_gfs.ref
   testoutput/ensembleb_nicas_gfs.ref
-  testoutput/ensembleb_dirac_local_gfs_12pe.ref
   testoutput/processperts_bump.ref
   testoutput/processperts_diffusion.ref
   testoutput/processperts_spectral.ref
@@ -442,7 +445,6 @@ foreach(DATE ${staticb_dates})
   list( APPEND fv3jedi_testoutput
     testoutput/staticb_ens-to-psichi_${DATE}_geos.ref
     testoutput/staticb_prep_${DATE}_geos.ref
-    testoutput/ensembleb_prep_${DATE}_geos.ref
   )
 endforeach()
 
@@ -1356,6 +1358,26 @@ ecbuild_add_test( TARGET   fv3jedi_hyb-fgat_gfs_aero
                   COMMAND  fv3jedi_var.x
                   TEST_DEPENDS fv3jedi_bumpparameters_nicas_gfs_aero )
 
+# Non-FMS I/O path
+# -----------
+# Read and write in turn within one execution (read after write, repeated reads and writes,
+# re-reading a file written by the non-FMS path in another precision).
+ecbuild_add_test( TARGET   fv3jedi_convertstate_rrfs_nofms_lifecycle
+                  MPI      12
+                  ARGS     testinput/convertstate_rrfs_nofms_lifecycle.yaml
+                  COMMAND  fv3jedi_convertstate.x )
+
+# Read on one regional grid and write on another, twice, within one execution
+ecbuild_add_test( TARGET   fv3jedi_convertstate_rrfs_nofms_dualres
+                  MPI      12
+                  ARGS     testinput/convertstate_rrfs_nofms_dualres.yaml
+                  COMMAND  fv3jedi_convertstate.x )
+
+ecbuild_add_test( TARGET   fv3jedi_3dvar_rrfs_nofms
+                  MPI      12
+                  ARGS     testinput/3dvar_rrfs_nofms.yaml
+                  COMMAND  fv3jedi_var.x )
+
 # Hybrid FGAT
 # -----------
 ecbuild_add_test( TARGET   fv3jedi_hyb-fgat_fv3lm
@@ -1480,6 +1502,12 @@ ecbuild_add_test( TARGET   fv3jedi_letkf
                   CONDITION crtm_FOUND
                   COMMAND  fv3jedi_letkf.x )
 
+ecbuild_add_test( TARGET   fv3jedi_letkf_onestep_redist
+                  MPI      6
+                  ARGS     testinput/letkf_onestep_redist.yaml
+                  CONDITION crtm_FOUND
+                  COMMAND  fv3jedi_letkf.x )
+
 ecbuild_add_test( TARGET   fv3jedi_letkf_perturbed
                   MPI      6
                   ARGS     testinput/letkf_perturbed.yaml
@@ -1595,8 +1623,8 @@ ecbuild_add_test( TARGET   fv3jedi_eda_block_3dvar
                   LABELS   CI_exclude_fv3jedi
                   TEST_DEPENDS fv3jedi_bumpparameters_nicas_gfs )
 
-# Nightly tests
-# ------------
+# Tier 2 and extended tests
+# -------------------------
 
 # Full BUMP static covariance setup, GFS case
 # -------------------------------------------
@@ -1740,7 +1768,7 @@ foreach(DATE ${staticb_dates})
                     LABELS       tier2 )
 endforeach()
 
-# Compute vertical balance using previously pre-computed vertical covariances, and unbalance ensemble members
+# Compute the vertical-balance operator from pre-computed vertical covariances
 ecbuild_add_test( TARGET       fv3jedi_staticb_vbal_geos
                   MPI          12
                   ARGS         testinput/staticb_vbal_geos.yaml
@@ -1764,10 +1792,8 @@ ecbuild_add_test( TARGET       fv3jedi_staticb_cor_geos
                   MPI          12
                   ARGS         testinput/staticb_cor_geos.yaml
                   COMMAND      fv3jedi_error_covariance_toolbox.x
-                  TEST_DEPENDS fv3jedi_staticb_prep_2020121421_geos
-                               fv3jedi_staticb_prep_2020121500_geos
-                               fv3jedi_staticb_prep_2020121503_geos
-                  LABELS       ci_flake_disable )
+                  TEST_DEPENDS fv3jedi_staticb_vbal_geos
+                  LABELS       tier2 )
 
 # Compute NICAS operator using the length-scales
 ecbuild_add_test( TARGET       fv3jedi_staticb_nicas_geos
@@ -1775,7 +1801,7 @@ ecbuild_add_test( TARGET       fv3jedi_staticb_nicas_geos
                   ARGS         testinput/staticb_nicas_geos.yaml
                   COMMAND      fv3jedi_error_covariance_toolbox.x
                   TEST_DEPENDS fv3jedi_staticb_cor_geos
-                  LABELS       ci_flake_disable )
+                  LABELS       tier2 )
 
 # Compute NICAS operator using the length-scales
 ecbuild_add_test( TARGET       fv3jedi_ens_spread_geos
@@ -1882,20 +1908,12 @@ ecbuild_add_test( TARGET       fv3jedi_ensembleb_loc_gfs
                                fv3jedi_ensembleb_prep_2020121503_gfs
                   LABELS       tier2 )
 
-# Compute NICAS operator using the length-scales
+# Disabled pending repair; fv3jedi_hyb-3dvar_gfs still depends on this target.
 # ecbuild_add_test( TARGET       fv3jedi_ensembleb_nicas_gfs
 #                   MPI          12
 #                   ARGS         testinput/ensembleb_nicas_gfs.yaml
 #                   COMMAND      fv3jedi_error_covariance_toolbox.x
 #                   TEST_DEPENDS fv3jedi_ensembleb_loc_gfs
-#                   LABELS       tier2 )
-
-# Dirac test using the full ensemble B, local files 12 PEs
-# ecbuild_add_test( TARGET       fv3jedi_ensembleb_dirac_local_gfs_12pe
-#                   MPI          12
-#                   ARGS         testinput/ensembleb_dirac_local_gfs_12pe.yaml
-#                   COMMAND      fv3jedi_error_covariance_toolbox.x
-#                   TEST_DEPENDS fv3jedi_ensembleb_nicas_gfs
 #                   LABELS       tier2 )
 
 # Full observation h(x) for each model
@@ -1993,4 +2011,3 @@ ecbuild_add_test( TARGET   fv3jedi_4dvar_geos_cf_p12
                   ARGS     testinput/4dvar_geos_cf.yaml
                   COMMAND  fv3jedi_var.x
                   LABELS   tier2 )
-

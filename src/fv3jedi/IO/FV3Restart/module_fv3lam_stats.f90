@@ -31,11 +31,12 @@ module module_ncfile_stat
   private
 
   public :: ncfile_stat
+  public :: inquire_var_shape
 
   type :: ncfile_stat
 
       integer :: numfiles
-      character(len=120),allocatable :: filename(:)
+      character(len=512),allocatable :: filename(:)   ! full paths; 120 truncated long paths
       integer,allocatable :: numvarfile(:)
       integer :: numvar
       character(len=max_varname_length),allocatable :: list_varname(:)
@@ -148,20 +149,16 @@ contains
 
   subroutine fill_dims(this)
 
-    use netcdf, only: nf90_open,nf90_close,nf90_get_var,nf90_noerr
-    use netcdf, only: nf90_nowrite,nf90_inquire,nf90_inquire_dimension
-    use netcdf, only: nf90_inquire_variable,nf90_inq_varid,nf90_strerror
+    use netcdf, only: nf90_open,nf90_close,nf90_noerr,nf90_nowrite,nf90_strerror
 
     implicit none
     class(ncfile_stat) :: this
 
     integer :: ncid
-    integer :: ndimensions,nvariables,nattributes,unlimiteddimid
-    integer,allocatable :: dim_len(:)
-    integer,allocatable :: dim_id(:)
-    integer :: k,len,ndim
+    integer :: k
     character(len=max_varname_length) :: name
-    integer :: varid,iret,xtype
+    character(len=256) :: errmsg
+    integer :: iret
     logical :: ifexist
     integer :: n,lb,kk
 !
@@ -172,72 +169,31 @@ contains
     do n=1,this%numfiles
        if(this%numvarfile(n) <=0) cycle
 
+       ! A missing file is fatal: skipping it would pair every later variable with the
+       ! wrong entry of list_varname
        inquire(file=trim(this%filename(n)),exist=ifexist )
        if(.not.ifexist) then
-         write(6,*) 'file does not exist ',trim(this%filename(n))
-         cycle
+         write(6,*) 'fill_dims: file does not exist ',trim(this%filename(n))
+         call fatal_error()
        else
          write(6,*) ' find dimensions for file ',trim(this%filename(n))
        endif
 !
-       iret=nf90_open(this%filename(n),nf90_nowrite,ncid)
-
-       iret=nf90_inquire(ncid,ndimensions,nvariables,nattributes,unlimiteddimid)
-       if(allocated(dim_len)) deallocate(dim_len)
-       allocate(dim_len(ndimensions))
-
-       do k=1,ndimensions
-          iret=nf90_inquire_dimension(ncid,k,name,len)
-          dim_len(k)=len
-       enddo
+       iret=nf90_open(trim(this%filename(n)),nf90_nowrite,ncid)
+       if(iret /= nf90_noerr) then
+         write(6,*) 'fill_dims: cannot open ',trim(this%filename(n)),': ',trim(nf90_strerror(iret))
+         call fatal_error()
+       endif
 
        do kk=1,this%numvarfile(n)
           k=lb+kk-1
           name=this%list_varname(k)
-          iret = nf90_inq_varid(ncid, trim(name), VarId)
-          if(iret /= nf90_noerr) then
-            write(*,'("fill_dims: Variable ",3A)') trim(name),' not found in file ',trim(this%filename(n))
-            write(6,*) nf90_strerror(iret)
+          call inquire_var_shape(ncid, name, this%dim_1(k), this%dim_2(k), this%dim_3(k), &
+                                 this%num_dim(k), this%vartype(k), iret, errmsg)
+          if(iret /= 0) then
+            write(6,'("fill_dims: ",3A)') trim(errmsg),' in file ',trim(this%filename(n))
+            call fatal_error()
           endif
-          iret=nf90_inquire_variable(ncid,VarId,ndims=ndim)
-
-          if(allocated(dim_id    )) deallocate(dim_id    )
-          allocate(dim_id(ndim))
-          iret = nf90_inquire_variable(ncid, VarId, dimids = dim_id(1:ndim))
-          if(ndim==4) then
-             if(dim_len(dim_id(4))==1) then
-                 this%dim_1(k)=dim_len(dim_id(1))
-                 this%dim_2(k)=dim_len(dim_id(2))
-                 this%dim_3(k)=dim_len(dim_id(3))
-                 this%num_dim(k)=3
-             else
-                 write(6,*) '4th dimension must be 1',trim(name),dim_len(dim_id(4))
-                 stop 123
-             endif
-          elseif(ndim==3) then
-             if(dim_len(dim_id(3))==1) then
-                 this%dim_1(k)=dim_len(dim_id(1))
-                 this%dim_2(k)=dim_len(dim_id(2))
-                 this%dim_3(k)=1
-                 this%num_dim(k)=2
-             else
-                 this%dim_1(k)=dim_len(dim_id(1))
-                 this%dim_2(k)=dim_len(dim_id(2))
-                 this%dim_3(k)=dim_len(dim_id(3))
-                 this%num_dim(k)=3
-             endif
-          elseif(ndim==2) then
-             this%dim_1(k)=dim_len(dim_id(1))
-             this%dim_2(k)=dim_len(dim_id(2))
-             this%dim_3(k)=1
-             this%num_dim(k)=2
-          else
-             write(6,*) 'something wrong with dimension size, ',trim(name),ndim
-             stop 123
-          endif
-
-          iret = nf90_inquire_variable(ncid, VarId, xtype = xtype)
-          this%vartype(k)=xtype
        enddo   ! end of loop for var list in a file
 
        iret=nf90_close(ncid)
@@ -251,5 +207,100 @@ contains
     enddo
 
   end subroutine fill_dims
+
+  ! Shape and storage type of one variable of an open file, interpreted the way the regional
+  ! restart I/O stores fields (x, y, then levels):
+  !   (x, y, z, t) with t = 1   -> dim_3 = z, num_dim = 3
+  !   (x, y, z)    with z > 1   -> dim_3 = z, num_dim = 3
+  !   (x, y, t)    with t = 1   -> dim_3 = 1, num_dim = 2
+  !   (x, y)                    -> dim_3 = 1, num_dim = 2
+  ! Returns status /= 0 and a message, without aborting, if the variable is missing, has
+  ! another shape, or any netCDF inquiry fails, so each caller can abort on the
+  ! communicator it runs on.
+  subroutine inquire_var_shape(ncid, name, dim_1, dim_2, dim_3, num_dim, xtype, status, errmsg)
+    use netcdf, only: nf90_inq_varid, nf90_inquire_variable, nf90_inquire_dimension, &
+                      nf90_noerr, nf90_strerror
+    implicit none
+    integer,          intent(in)  :: ncid
+    character(len=*), intent(in)  :: name
+    integer,          intent(out) :: dim_1, dim_2, dim_3, num_dim, xtype, status
+    character(len=*), intent(out) :: errmsg
+
+    integer :: varid, ndim, k, iret
+    integer :: dim_id(4), dim_len(4)
+
+    dim_1 = 1; dim_2 = 1; dim_3 = 1; num_dim = 1; xtype = 0
+    status = 0
+    errmsg = ''
+
+    iret = nf90_inq_varid(ncid, trim(name), varid)
+    if (iret /= nf90_noerr) then
+      status = 1
+      errmsg = 'variable '//trim(name)//' not found: '//trim(nf90_strerror(iret))
+      return
+    endif
+
+    iret = nf90_inquire_variable(ncid, varid, ndims=ndim, xtype=xtype)
+    if (iret /= nf90_noerr) then
+      status = 4
+      errmsg = 'cannot inquire variable '//trim(name)//': '//trim(nf90_strerror(iret))
+      return
+    endif
+    if (ndim < 2 .or. ndim > 4) then
+      status = 2
+      write(errmsg,'("variable ",a," has ",i0," dimensions; expected 2, 3 or 4")') trim(name), ndim
+      return
+    endif
+
+    iret = nf90_inquire_variable(ncid, varid, dimids=dim_id(1:ndim))
+    if (iret /= nf90_noerr) then
+      status = 4
+      errmsg = 'cannot inquire the dimensions of variable '//trim(name)//': '//trim(nf90_strerror(iret))
+      return
+    endif
+    do k = 1, ndim
+      iret = nf90_inquire_dimension(ncid, dim_id(k), len=dim_len(k))
+      if (iret /= nf90_noerr) then
+        status = 4
+        write(errmsg,'("cannot inquire dimension ",i0," of variable ",a,": ",a)') &
+              k, trim(name), trim(nf90_strerror(iret))
+        return
+      endif
+    enddo
+
+    dim_1 = dim_len(1)
+    dim_2 = dim_len(2)
+    select case (ndim)
+    case (4)
+      if (dim_len(4) /= 1) then
+        status = 3
+        write(errmsg,'("variable ",a,": 4th dimension must be 1, is ",i0)') trim(name), dim_len(4)
+        return
+      endif
+      dim_3 = dim_len(3)
+      num_dim = 3
+    case (3)
+      if (dim_len(3) == 1) then
+        dim_3 = 1
+        num_dim = 2
+      else
+        dim_3 = dim_len(3)
+        num_dim = 3
+      endif
+    case (2)
+      dim_3 = 1
+      num_dim = 2
+    end select
+  end subroutine inquire_var_shape
+
+  ! fill_dims runs on one rank only while the others wait in the next collective, so a
+  ! plain STOP would leave them hanging: abort the whole job instead.
+  subroutine fatal_error()
+    use mpi, only: MPI_COMM_WORLD
+    implicit none
+    integer :: ierr
+    call flush(6)
+    call MPI_Abort(MPI_COMM_WORLD, 123, ierr)
+  end subroutine fatal_error
 
 end module module_ncfile_stat

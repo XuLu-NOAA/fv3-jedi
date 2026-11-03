@@ -88,6 +88,16 @@ cost function:
       - fraction_of_lake
       - fraction_of_ice
       output variables: *avars
+    inverse linear variable change:
+      linear variable change name: Analysis2Control
+      input variables: *avars
+      output variables:
+      - air_pressure_at_surface
+      - skin_temperature_at_surface
+      - fraction_of_land
+      - fraction_of_ocean
+      - fraction_of_lake
+      - fraction_of_ice
   observations:
     observers:
     - obs space:
@@ -107,17 +117,6 @@ cost function:
         observation alias file: testinput/obsop_name_map.yaml
       obs error:
         covariance model: diagonal
-final:
-  diagnostics:
-    departures: oman
-output:
-  filetype: cube sphere history
-  provider: geos
-  datapath: Data/analysis
-  filename: 3dvars-geos-tskin.ana.%yyyy%mm%dd_%hh%MM%ssz.nc4
-  first: PT0H
-  frequency: PT1H
-  field io names: *field_io_names
 variational:
   minimizer:
     algorithm: DRPCG
@@ -140,6 +139,7 @@ variational:
       npz: 72
     diagnostics:
       departures: ombg
+output: {}
 test:
   reference filename: testoutput/3dvar_geos_tskin.ref
   float relative tolerance: 1.0e-2

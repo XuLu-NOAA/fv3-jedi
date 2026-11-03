@@ -117,6 +117,13 @@ class IOFmsParameters : public IOParametersBase {
   oops::Parameter<int> lustre_stripe_size{"lustre stripe size",
                                           "lustre stripe size in bytes",
                                           1048576, this};
+
+  // Upper limit on the number of slabs scattered or gathered at once by the regional
+  // restart path (use_fms_lib: false).  Each slab in flight needs a staging slot on every
+  // rank.  0 = no limit (one slab per node).
+  oops::Parameter<int> max_io_batch_size{"max io batch size",
+                                         "maximum number of slabs in flight; 0 = one per node",
+                                         0, this};
 };
 
 // -------------------------------------------------------------------------------------------------
